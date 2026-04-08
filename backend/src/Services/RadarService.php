@@ -544,6 +544,9 @@ final class RadarService
                 $report['ai_best_deals_title'] = $aiAnalysis['title'];
                 $report['ai_best_deals_text'] = $aiAnalysis['text'];
                 $report['ai_best_deals_cards'] = $aiAnalysis['cards'];
+                $report['ai_risk_cards'] = $aiAnalysis['risks'];
+                $report['ai_false_signal_cards'] = $aiAnalysis['false_signals'];
+                $report['ai_stable_watch_cards'] = $aiAnalysis['stable_watch'];
                 $report['ai_best_deals_sources'] = $aiAnalysis['sources'];
                 $report['ai_model'] = $aiAnalysis['model'];
                 $report['ai_generated_at'] = $aiAnalysis['generated_at'];
@@ -1184,6 +1187,9 @@ PS1;
         $report['ai_best_deals_title'] ??= null;
         $report['ai_best_deals_text'] ??= null;
         $report['ai_best_deals_cards'] ??= [];
+        $report['ai_risk_cards'] ??= [];
+        $report['ai_false_signal_cards'] ??= [];
+        $report['ai_stable_watch_cards'] ??= [];
         $report['ai_best_deals_sources'] ??= [];
         $report['ai_model'] ??= null;
         $report['ai_generated_at'] ??= null;
@@ -1247,12 +1253,12 @@ PS1;
             'messages' => [
                 [
                     'role' => 'system',
-                    'content' => 'Tu es un analyste marche CS2 prudent. Tu recois le JSON du rapport du jour, tu peux utiliser la recherche web OpenRouter pour verifier le contexte public recent, puis tu rediges une synthese concise en francais. N invente aucune donnee. Reponds en JSON strict avec les cles title, text, best_deals, source_urls. Chaque best_deals doit contenir name, verdict et rationale.',
+                    'content' => 'Tu es un analyste marche CS2 prudent, oriente investisseur debutant. Tu recois le JSON du rapport du jour, tu peux utiliser la recherche web OpenRouter pour verifier le contexte public recent, puis tu rediges une synthese concise en francais. N invente aucune donnee. Reponds en JSON strict avec les cles title, text, best_deals, risks, false_signals, stable_watch, source_urls. Chaque entree doit contenir name, verdict et rationale. Mets en avant les meilleures affaires, les risques de liquidite ou de momentum, les faux signaux possibles et les items stables a garder sous surveillance.',
                 ],
                 [
                     'role' => 'user',
                     'content' => json_encode([
-                        'task' => 'Lis ce JSON canonique stocke par l application. Base ton analyse sur latest_report_context, les echantillons marche, la watchlist et les signaux CSFloat. Utilise la recherche web seulement pour confirmer le contexte public recent ou signaler un risque de liquidite. Si tu n as pas assez d elements, dis-le clairement.',
+                        'task' => 'Lis ce JSON canonique stocke par l application. Base ton analyse sur latest_report_context, les echantillons marche, la watchlist et les signaux CSFloat. Utilise la recherche web seulement pour confirmer le contexte public recent ou signaler un risque de liquidite. Rends une lecture investisseur avec 4 angles: meilleures affaires, risques, faux signaux, items stables a surveiller. Si tu n as pas assez d elements, dis-le clairement.',
                         'canonical_state' => $this->aiPayloadFromCanonicalState($report),
                     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 ],
@@ -1287,6 +1293,9 @@ PS1;
                 'title' => 'Meilleures affaires du jour',
                 'text' => trim($content),
                 'cards' => [],
+                'risks' => [],
+                'false_signals' => [],
+                'stable_watch' => [],
                 'sources' => $this->extractLinksFromText($content),
                 'model' => (string) ($response['model'] ?? $this->openRouterModel()),
                 'generated_at' => date(DATE_ATOM),
@@ -1297,6 +1306,9 @@ PS1;
             'title' => (string) ($decoded['title'] ?? 'Meilleures affaires du jour'),
             'text' => trim((string) ($decoded['text'] ?? '')),
             'cards' => $this->normalizeAiCards($decoded['best_deals'] ?? []),
+            'risks' => $this->normalizeAiCards($decoded['risks'] ?? []),
+            'false_signals' => $this->normalizeAiCards($decoded['false_signals'] ?? []),
+            'stable_watch' => $this->normalizeAiCards($decoded['stable_watch'] ?? []),
             'sources' => (($sources = $this->normalizeAiSources($decoded['source_urls'] ?? [])) !== [] ? $sources : $this->extractLinksFromText($content)),
             'model' => (string) ($response['model'] ?? $this->openRouterModel()),
             'generated_at' => date(DATE_ATOM),

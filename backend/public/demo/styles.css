@@ -403,6 +403,28 @@ button { border: 0; }
 .metric-row { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 0.9rem; }
 .reason { padding: 12px 14px; border-radius: 14px; background: rgba(182, 77, 47, 0.08); color: var(--accent); font-weight: 600; }
 
+.ai-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin-top: 8px;
+}
+
+.ai-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(53, 36, 25, 0.06);
+}
+
+.ai-section h5 {
+  margin: 0;
+  font-size: 1rem;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
 .table-item { grid-template-columns: 1fr auto; align-items: center; }
 .table-meta { font-size: 0.9rem; }
 .value-stack { text-align: right; }

@@ -79,6 +79,41 @@ const itemActions = (item) => {
   return `<div class="item-link-row">${actions.join("")}</div>`;
 };
 
+const aiSection = (title, cards, emptyText) => `
+  <div class="ai-section">
+    <h5>${escapeHtml(title)}</h5>
+    <div class="table-list">
+      ${
+        (cards ?? []).length > 0
+          ? cards
+              .map(
+                (card) => `
+                <article class="table-item">
+                  <div class="table-item-main">
+                    <strong>${escapeHtml(card.name)}</strong>
+                    <span class="table-meta">${escapeHtml(card.rationale)}</span>
+                  </div>
+                  <div class="value-stack">
+                    <strong>${escapeHtml(card.verdict || "À surveiller")}</strong>
+                    <span class="table-meta">${escapeHtml(title)}</span>
+                  </div>
+                </article>
+              `
+              )
+              .join("")
+          : `
+            <article class="table-item">
+              <div class="table-item-main">
+                <strong>Rien de marquant pour cette section</strong>
+                <span class="table-meta">${escapeHtml(emptyText)}</span>
+              </div>
+            </article>
+          `
+      }
+    </div>
+  </div>
+`;
+
 const fetchJson = async (path, options = {}) => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -266,6 +301,7 @@ const renderReportSummary = () => {
           </div>
         </div>
         <div class="table-list" id="ai-best-deals"></div>
+        <div class="ai-grid" id="ai-secondary-sections"></div>
         <div class="table-list" id="ai-sources"></div>
       `;
       summary.insertAdjacentElement("afterend", panel);
@@ -321,6 +357,27 @@ const renderReportSummary = () => {
             )
             .join("")
         : "";
+  }
+
+  const secondaryRoot = document.getElementById("ai-secondary-sections");
+  if (secondaryRoot) {
+    secondaryRoot.innerHTML = [
+      aiSection(
+        "Risques du jour",
+        report.ai_risk_cards ?? [],
+        "Aucun risque prioritaire n'a ete isole par l'analyse IA."
+      ),
+      aiSection(
+        "Faux signaux",
+        report.ai_false_signal_cards ?? [],
+        "L'analyse IA n'a pas releve de faux signal dominant sur cet echantillon."
+      ),
+      aiSection(
+        "Items stables a surveiller",
+        report.ai_stable_watch_cards ?? [],
+        "Aucun item stable supplementaire n'a ete mis en avant par l'analyse IA."
+      ),
+    ].join("");
   }
 };
 
