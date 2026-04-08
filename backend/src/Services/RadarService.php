@@ -238,7 +238,11 @@ final class RadarService
         }
 
         $data = [];
-        foreach ($this->readJson($this->watchlistFile, []) as $entry) {
+        foreach ($this->readWatchlistEntries() as $entry) {
+            if (($entry['is_active'] ?? true) !== true) {
+                continue;
+            }
+
             $marketItem = $marketIndex[$entry['market_hash_name']] ?? null;
             $catalogItem = $catalogIndex[$entry['market_hash_name']] ?? null;
             $data[] = [
@@ -246,10 +250,13 @@ final class RadarService
                 'name' => $entry['market_hash_name'],
                 'price' => $marketItem['current_price'] ?? null,
                 'note' => $entry['note'],
+                'managed_by' => $entry['managed_by'] ?? 'system',
+                'last_ai_action' => $entry['last_ai_action'] ?? null,
+                'last_ai_reason' => $entry['last_ai_reason'] ?? null,
                 'image_url' => $marketItem['image_url'] ?? $catalogItem['image_url'] ?? null,
                 'item_page' => $marketItem['item_page'] ?? null,
                 'market_page' => $marketItem['market_page'] ?? null,
-                'is_active' => true,
+                'is_active' => (bool) ($entry['is_active'] ?? true),
             ];
         }
 
@@ -402,7 +409,11 @@ final class RadarService
         }
 
         $watchlist = [];
-        foreach ($this->readJson($this->watchlistFile, []) as $entry) {
+        foreach ($this->readWatchlistEntries() as $entry) {
+            if (($entry['is_active'] ?? true) !== true) {
+                continue;
+            }
+
             $watchlist[$entry['market_hash_name']] = true;
         }
 
@@ -547,6 +558,7 @@ final class RadarService
                 $report['ai_risk_cards'] = $aiAnalysis['risks'];
                 $report['ai_false_signal_cards'] = $aiAnalysis['false_signals'];
                 $report['ai_stable_watch_cards'] = $aiAnalysis['stable_watch'];
+                $report['ai_watchlist_actions'] = $this->applyAiWatchlistActions($aiAnalysis['watchlist_actions']);
                 $report['ai_best_deals_sources'] = $aiAnalysis['sources'];
                 $report['ai_model'] = $aiAnalysis['model'];
                 $report['ai_generated_at'] = $aiAnalysis['generated_at'];
@@ -696,11 +708,98 @@ final class RadarService
         }
 
         $this->writeJson($this->watchlistFile, [
-            ['market_hash_name' => 'AK-47 | Redline (Field-Tested)', 'note' => 'suivi de momentum'],
-            ['market_hash_name' => 'USP-S | Cortex (Minimal Wear)', 'note' => 'surveillance cassure'],
-            ['market_hash_name' => 'AWP | Asiimov (Battle-Scarred)', 'note' => 'item liquide'],
-            ['market_hash_name' => 'Desert Eagle | Printstream (Field-Tested)', 'note' => 'sous moyenne 7 jours'],
+            $this->seedWatchlistEntry('AK-47 | Redline (Field-Tested)', 'suivi de momentum'),
+            $this->seedWatchlistEntry('USP-S | Cortex (Minimal Wear)', 'surveillance cassure'),
+            $this->seedWatchlistEntry('AWP | Asiimov (Battle-Scarred)', 'item liquide'),
+            $this->seedWatchlistEntry('Desert Eagle | Printstream (Field-Tested)', 'sous moyenne 7 jours'),
         ]);
+    }
+
+    private function seedWatchlistEntry(string $marketHashName, string $note): array
+    {
+        $now = date(DATE_ATOM);
+
+        return [
+            'market_hash_name' => $marketHashName,
+            'note' => $note,
+            'managed_by' => 'system',
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+            'last_ai_action' => null,
+            'last_ai_reason' => null,
+        ];
+    }
+
+    private function readWatchlistEntries(): array
+    {
+        $entries = $this->readJson($this->watchlistFile, []);
+        $normalized = [];
+
+        foreach ($entries as $entry) {
+            $candidate = $this->normalizeWatchlistEntry($entry);
+            if ($candidate === null) {
+                continue;
+            }
+
+            $normalized[$candidate['market_hash_name']] = $candidate;
+        }
+
+        return array_values($normalized);
+    }
+
+    private function normalizeWatchlistEntry(mixed $entry): ?array
+    {
+        if (is_string($entry)) {
+            $name = trim($entry);
+            if ($name === '') {
+                return null;
+            }
+
+            $now = date(DATE_ATOM);
+
+            return [
+                'market_hash_name' => $name,
+                'note' => 'surveillance radar',
+                'managed_by' => 'system',
+                'is_active' => true,
+                'created_at' => $now,
+                'updated_at' => $now,
+                'last_ai_action' => null,
+                'last_ai_reason' => null,
+            ];
+        }
+
+        if (!is_array($entry)) {
+            return null;
+        }
+
+        $name = trim((string) ($entry['market_hash_name'] ?? $entry['name'] ?? ''));
+        if ($name === '') {
+            return null;
+        }
+
+        $now = date(DATE_ATOM);
+        $managedBy = trim((string) ($entry['managed_by'] ?? 'system'));
+        if ($managedBy === '') {
+            $managedBy = 'system';
+        }
+
+        return [
+            'market_hash_name' => $name,
+            'note' => trim((string) ($entry['note'] ?? 'surveillance radar')) ?: 'surveillance radar',
+            'managed_by' => $managedBy,
+            'is_active' => isset($entry['is_active']) ? (bool) $entry['is_active'] : true,
+            'created_at' => (string) ($entry['created_at'] ?? $now),
+            'updated_at' => (string) ($entry['updated_at'] ?? $entry['created_at'] ?? $now),
+            'last_ai_action' => isset($entry['last_ai_action']) ? (string) $entry['last_ai_action'] : null,
+            'last_ai_reason' => isset($entry['last_ai_reason']) ? trim((string) $entry['last_ai_reason']) : null,
+        ];
+    }
+
+    private function writeWatchlistEntries(array $entries): void
+    {
+        $this->writeJson($this->watchlistFile, array_values($entries));
     }
 
     private function fetchJsonWithCurl(string $url, array $headers = [], int $timeout = 60): array
@@ -1113,7 +1212,10 @@ PS1;
         $reports = $this->readJson($this->reportsFile, []);
         $latestReport = $reports[0] ?? [];
         $jobs = $this->readJson($this->jobsFile, []);
-        $watchlist = $this->readJson($this->watchlistFile, []);
+        $watchlist = array_values(array_filter(
+            $this->readWatchlistEntries(),
+            static fn (array $entry): bool => ($entry['is_active'] ?? true) === true
+        ));
         $csfloat = $this->readJson($this->csfloatSignalsFile, ['signals' => []]);
 
         return [
@@ -1124,6 +1226,7 @@ PS1;
                 'summary_text' => $latestReport['summary_text'] ?? null,
                 'ai_best_deals_title' => $latestReport['ai_best_deals_title'] ?? null,
                 'ai_best_deals_text' => $latestReport['ai_best_deals_text'] ?? null,
+                'ai_watchlist_actions' => array_slice($latestReport['ai_watchlist_actions'] ?? [], 0, 8),
                 'top_opportunities' => array_slice($latestReport['top_opportunities'] ?? [], 0, 8),
                 'top_gainers' => array_slice($latestReport['top_gainers'] ?? [], 0, 8),
                 'top_losers' => array_slice($latestReport['top_losers'] ?? [], 0, 8),
@@ -1163,6 +1266,7 @@ PS1;
         $state['latest_report_context'] = [
             'date' => $report['date'] ?? null,
             'summary_text' => $report['summary_text'] ?? null,
+            'ai_watchlist_actions' => array_slice($report['ai_watchlist_actions'] ?? [], 0, 8),
             'top_opportunities' => array_slice($report['top_opportunities'] ?? [], 0, 8),
             'top_gainers' => array_slice($report['top_gainers'] ?? [], 0, 8),
             'top_losers' => array_slice($report['top_losers'] ?? [], 0, 8),
@@ -1190,6 +1294,7 @@ PS1;
         $report['ai_risk_cards'] ??= [];
         $report['ai_false_signal_cards'] ??= [];
         $report['ai_stable_watch_cards'] ??= [];
+        $report['ai_watchlist_actions'] ??= [];
         $report['ai_best_deals_sources'] ??= [];
         $report['ai_model'] ??= null;
         $report['ai_generated_at'] ??= null;
@@ -1253,12 +1358,12 @@ PS1;
             'messages' => [
                 [
                     'role' => 'system',
-                    'content' => 'Tu es un analyste marche CS2 prudent, oriente investisseur debutant. Tu recois le JSON du rapport du jour, tu peux utiliser la recherche web OpenRouter pour verifier le contexte public recent, puis tu rediges une synthese concise en francais. N invente aucune donnee. Reponds en JSON strict avec les cles title, text, best_deals, risks, false_signals, stable_watch, source_urls. Chaque entree doit contenir name, verdict et rationale. Mets en avant les meilleures affaires, les risques de liquidite ou de momentum, les faux signaux possibles et les items stables a garder sous surveillance.',
+                    'content' => 'Tu es un analyste marche CS2 prudent, oriente investisseur debutant. Tu recois le JSON du rapport du jour, tu peux utiliser la recherche web OpenRouter pour verifier le contexte public recent, puis tu rediges une synthese concise en francais. N invente aucune donnee. Reponds en JSON strict avec les cles title, text, best_deals, risks, false_signals, stable_watch, watchlist_actions, source_urls. Chaque entree best_deals, risks, false_signals et stable_watch doit contenir name, verdict et rationale. Chaque entree watchlist_actions doit contenir action, name, rationale et optionnellement note. Les actions autorisees sont add, remove ou keep. Mets en avant les meilleures affaires, les risques de liquidite ou de momentum, les faux signaux possibles, les items stables a garder sous surveillance et les ajustements pertinents de watchlist.',
                 ],
                 [
                     'role' => 'user',
                     'content' => json_encode([
-                        'task' => 'Lis ce JSON canonique stocke par l application. Base ton analyse sur latest_report_context, les echantillons marche, la watchlist et les signaux CSFloat. Utilise la recherche web seulement pour confirmer le contexte public recent ou signaler un risque de liquidite. Rends une lecture investisseur avec 4 angles: meilleures affaires, risques, faux signaux, items stables a surveiller. Si tu n as pas assez d elements, dis-le clairement.',
+                        'task' => 'Lis ce JSON canonique stocke par l application. Base ton analyse sur latest_report_context, les echantillons marche, la watchlist et les signaux CSFloat. Utilise la recherche web seulement pour confirmer le contexte public recent ou signaler un risque de liquidite. Rends une lecture investisseur avec 5 angles: meilleures affaires, risques, faux signaux, items stables a surveiller et evolution utile de la watchlist. Pour watchlist_actions, ne propose add que pour des items presents dans le contexte du jour et remove seulement quand un item ne justifie plus une surveillance active. Si tu n as pas assez d elements, renvoie simplement une liste vide.',
                         'canonical_state' => $this->aiPayloadFromCanonicalState($report),
                     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 ],
@@ -1296,6 +1401,7 @@ PS1;
                 'risks' => [],
                 'false_signals' => [],
                 'stable_watch' => [],
+                'watchlist_actions' => [],
                 'sources' => $this->extractLinksFromText($content),
                 'model' => (string) ($response['model'] ?? $this->openRouterModel()),
                 'generated_at' => date(DATE_ATOM),
@@ -1309,6 +1415,7 @@ PS1;
             'risks' => $this->normalizeAiCards($decoded['risks'] ?? []),
             'false_signals' => $this->normalizeAiCards($decoded['false_signals'] ?? []),
             'stable_watch' => $this->normalizeAiCards($decoded['stable_watch'] ?? []),
+            'watchlist_actions' => $this->normalizeAiWatchlistActions($decoded['watchlist_actions'] ?? []),
             'sources' => (($sources = $this->normalizeAiSources($decoded['source_urls'] ?? [])) !== [] ? $sources : $this->extractLinksFromText($content)),
             'model' => (string) ($response['model'] ?? $this->openRouterModel()),
             'generated_at' => date(DATE_ATOM),
@@ -1383,6 +1490,160 @@ PS1;
         }
 
         return array_slice($normalized, 0, 5);
+    }
+
+    private function normalizeAiWatchlistActions(mixed $actions): array
+    {
+        if (!is_array($actions)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($actions as $action) {
+            if (!is_array($action)) {
+                continue;
+            }
+
+            $type = strtolower(trim((string) ($action['action'] ?? '')));
+            $name = trim((string) ($action['name'] ?? ''));
+            $rationale = trim((string) ($action['rationale'] ?? ''));
+            $note = trim((string) ($action['note'] ?? $rationale));
+            if ($name === '' || !in_array($type, ['add', 'remove', 'keep'], true)) {
+                continue;
+            }
+
+            $normalized[] = [
+                'action' => $type,
+                'name' => $name,
+                'rationale' => $rationale,
+                'note' => $note !== '' ? $note : 'ajustement IA',
+            ];
+        }
+
+        return array_slice($normalized, 0, 6);
+    }
+
+    private function applyAiWatchlistActions(array $actions): array
+    {
+        if ($actions === []) {
+            return [];
+        }
+
+        $catalogIndex = [];
+        foreach (($this->readJson($this->catalogFile, ['items' => []])['items'] ?? []) as $item) {
+            $name = trim((string) ($item['market_hash_name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+
+            $catalogIndex[$name] = $item;
+        }
+
+        $entries = [];
+        foreach ($this->readWatchlistEntries() as $entry) {
+            $entries[$entry['market_hash_name']] = $entry;
+        }
+
+        $applied = [];
+        $now = date(DATE_ATOM);
+        $addCount = 0;
+        $removeCount = 0;
+
+        foreach ($actions as $action) {
+            $type = $action['action'] ?? null;
+            $name = trim((string) ($action['name'] ?? ''));
+            $reason = trim((string) ($action['rationale'] ?? ''));
+            $note = trim((string) ($action['note'] ?? ''));
+            if (!is_string($type) || $name === '') {
+                continue;
+            }
+
+            if ($type === 'add') {
+                if ($addCount >= 3 || !isset($catalogIndex[$name])) {
+                    continue;
+                }
+
+                if (isset($entries[$name])) {
+                    $entries[$name]['is_active'] = true;
+                    $entries[$name]['note'] = $note !== '' ? $note : ($entries[$name]['note'] ?? 'surveillance radar');
+                    $entries[$name]['updated_at'] = $now;
+                    $entries[$name]['last_ai_action'] = 'kept';
+                    $entries[$name]['last_ai_reason'] = $reason !== '' ? $reason : 'item conserve par l analyse IA';
+                    $applied[] = [
+                        'action' => 'keep',
+                        'name' => $name,
+                        'rationale' => $entries[$name]['last_ai_reason'],
+                        'note' => $entries[$name]['note'],
+                    ];
+                    continue;
+                }
+
+                $entries[$name] = [
+                    'market_hash_name' => $name,
+                    'note' => $note !== '' ? $note : 'ajout IA sur signal du jour',
+                    'managed_by' => 'ai',
+                    'is_active' => true,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                    'last_ai_action' => 'added',
+                    'last_ai_reason' => $reason !== '' ? $reason : 'item ajoute par l analyse IA',
+                ];
+                $applied[] = [
+                    'action' => 'add',
+                    'name' => $name,
+                    'rationale' => $entries[$name]['last_ai_reason'],
+                    'note' => $entries[$name]['note'],
+                ];
+                $addCount++;
+                continue;
+            }
+
+            if ($type === 'remove') {
+                if ($removeCount >= 3 || !isset($entries[$name])) {
+                    continue;
+                }
+
+                $managedBy = (string) ($entries[$name]['managed_by'] ?? 'system');
+                if ($managedBy === 'manual') {
+                    continue;
+                }
+
+                $entries[$name]['is_active'] = false;
+                $entries[$name]['updated_at'] = $now;
+                $entries[$name]['last_ai_action'] = 'removed';
+                $entries[$name]['last_ai_reason'] = $reason !== '' ? $reason : 'item retire par l analyse IA';
+                $applied[] = [
+                    'action' => 'remove',
+                    'name' => $name,
+                    'rationale' => $entries[$name]['last_ai_reason'],
+                    'note' => $entries[$name]['note'] ?? 'surveillance radar',
+                ];
+                $removeCount++;
+                continue;
+            }
+
+            if ($type === 'keep' && isset($entries[$name])) {
+                $entries[$name]['is_active'] = true;
+                if ($note !== '') {
+                    $entries[$name]['note'] = $note;
+                }
+                $entries[$name]['updated_at'] = $now;
+                $entries[$name]['last_ai_action'] = 'kept';
+                $entries[$name]['last_ai_reason'] = $reason !== '' ? $reason : 'item conserve par l analyse IA';
+                $applied[] = [
+                    'action' => 'keep',
+                    'name' => $name,
+                    'rationale' => $entries[$name]['last_ai_reason'],
+                    'note' => $entries[$name]['note'],
+                ];
+            }
+        }
+
+        if ($applied !== []) {
+            $this->writeWatchlistEntries(array_values($entries));
+        }
+
+        return $applied;
     }
 
     private function normalizeAiSources(mixed $sources): array
@@ -1664,12 +1925,12 @@ PS1;
             ];
         }
 
-        foreach ($this->readJson($this->watchlistFile, []) as $entry) {
-            $name = (string) ($entry['market_hash_name'] ?? '');
-            if ($name === '') {
+        foreach ($this->readWatchlistEntries() as $entry) {
+            if (($entry['is_active'] ?? true) !== true) {
                 continue;
             }
 
+            $name = (string) ($entry['market_hash_name'] ?? '');
             $targets[$name] ??= [
                 'id' => $this->idFromName($name),
                 'market_hash_name' => $name,

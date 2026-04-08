@@ -116,6 +116,41 @@ const aiSection = (title, cards, emptyText) => `
   </div>
 `;
 
+const aiWatchlistSection = (title, actions, emptyText) => `
+  <div class="ai-section">
+    <h5>${escapeHtml(title)}</h5>
+    <div class="table-list">
+      ${
+        (actions ?? []).length > 0
+          ? actions
+              .map(
+                (action) => `
+                <article class="table-item">
+                  <div class="table-item-main">
+                    <strong>${escapeHtml(action.name)}</strong>
+                    <span class="table-meta">${escapeHtml(action.rationale || action.note || "")}</span>
+                  </div>
+                  <div class="value-stack">
+                    <strong>${escapeHtml((action.action || "keep").toUpperCase())}</strong>
+                    <span class="table-meta">${escapeHtml(action.note || "watchlist IA")}</span>
+                  </div>
+                </article>
+              `
+              )
+              .join("")
+          : `
+            <article class="table-item">
+              <div class="table-item-main">
+                <strong>Aucun ajustement IA applique</strong>
+                <span class="table-meta">${escapeHtml(emptyText)}</span>
+              </div>
+            </article>
+          `
+      }
+    </div>
+  </div>
+`;
+
 const fetchJson = async (path, options = {}) => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -391,6 +426,11 @@ const renderReportSummary = () => {
         report.ai_stable_watch_cards ?? [],
         "Aucun item stable supplementaire n'a ete mis en avant par l'analyse IA."
       ),
+      aiWatchlistSection(
+        "Mouvements de watchlist",
+        report.ai_watchlist_actions ?? [],
+        "L'analyse IA n'a ni ajoute ni retire d'item sur ce run."
+      ),
     ].join("");
   }
 };
@@ -658,7 +698,7 @@ const renderOpportunitiesLinked = () => {
 const renderWatchlistLinked = () => {
   renderSimpleTable("watchlist-table", state.watchlist?.data ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">${item.note}</span>${itemActions(item)}</div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">${item.note}</span><span class="table-meta">gestion ${escapeHtml(item.managed_by || "system")}${item.last_ai_action ? ` • IA ${escapeHtml(item.last_ai_action)}` : ""}</span>${item.last_ai_reason ? `<span class="table-meta">${escapeHtml(item.last_ai_reason)}</span>` : ""}${itemActions(item)}</div></div>
       <div class="value-stack"><strong>${euro(item.price)}</strong><span class="table-meta">watchlist</span></div>
     </article>
   `);
