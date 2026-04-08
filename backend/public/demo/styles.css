@@ -251,11 +251,22 @@ button { border: 0; }
 .signal-item { grid-template-columns: 80px 1fr auto; align-items: center; }
 .signal-item-meta,
 .table-item-main { display: grid; gap: 6px; }
+.table-item-with-image {
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.table-item-copy {
+  display: grid;
+  gap: 6px;
+}
 
 .skin-thumb {
   display: grid;
   place-items: center;
   min-height: 74px;
+  width: 80px;
   padding: 12px;
   border-radius: 20px;
   color: white;
@@ -268,8 +279,24 @@ button { border: 0; }
 
 .skin-thumb.large {
   min-height: 220px;
+  width: 100%;
   font-size: 2rem;
   border-radius: 26px;
+}
+
+.skin-thumb-image {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.2), transparent 28%),
+    linear-gradient(135deg, rgba(44, 29, 24, 0.22), rgba(123, 45, 31, 0.14) 48%, rgba(194, 100, 47, 0.08));
+}
+
+.skin-thumb-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 12px 22px rgba(33, 23, 18, 0.22));
 }
 
 .signal-score { text-align: right; }
@@ -355,6 +382,7 @@ button { border: 0; }
 
 .item-layout { display: grid; gap: 18px; }
 .item-hero { display: grid; gap: 22px; grid-template-columns: 320px 1fr; align-items: center; }
+.item-shot { display: grid; }
 .sparkline-large { width: 100%; height: 220px; }
 .line-chart { border-radius: 18px; background: rgba(255, 255, 255, 0.55); overflow: hidden; }
 .log-entry { grid-template-columns: auto 1fr; align-items: start; }

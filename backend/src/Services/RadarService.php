@@ -217,13 +217,20 @@ final class RadarService
             $marketIndex[$item['market_hash_name']] = $item;
         }
 
+        $catalogIndex = [];
+        foreach (($this->readJson($this->catalogFile, ['items' => []])['items'] ?? []) as $item) {
+            $catalogIndex[$item['market_hash_name']] = $item;
+        }
+
         $data = [];
         foreach ($this->readJson($this->watchlistFile, []) as $entry) {
             $marketItem = $marketIndex[$entry['market_hash_name']] ?? null;
+            $catalogItem = $catalogIndex[$entry['market_hash_name']] ?? null;
             $data[] = [
                 'name' => $entry['market_hash_name'],
                 'price' => $marketItem['current_price'] ?? null,
                 'note' => $entry['note'],
+                'image_url' => $marketItem['image_url'] ?? $catalogItem['image_url'] ?? null,
                 'is_active' => true,
             ];
         }
@@ -1163,8 +1170,41 @@ PS1;
         $report['ai_model'] ??= null;
         $report['ai_generated_at'] ??= null;
         $report['ai_best_deals_error'] ??= null;
+        $report['top_opportunities'] = $this->enrichRowsWithCatalogImages($report['top_opportunities'] ?? []);
+        $report['top_gainers'] = $this->enrichRowsWithCatalogImages($report['top_gainers'] ?? []);
+        $report['top_losers'] = $this->enrichRowsWithCatalogImages($report['top_losers'] ?? []);
+        $report['top_volume'] = $this->enrichRowsWithCatalogImages($report['top_volume'] ?? []);
 
         return $report;
+    }
+
+    private function enrichRowsWithCatalogImages(array $rows): array
+    {
+        if ($rows === []) {
+            return [];
+        }
+
+        $catalogIndex = [];
+        foreach (($this->readJson($this->catalogFile, ['items' => []])['items'] ?? []) as $item) {
+            $catalogIndex[$item['market_hash_name']] = $item['image_url'] ?? null;
+            $catalogIndex[$item['name'] ?? $item['market_hash_name']] = $item['image_url'] ?? null;
+        }
+
+        foreach ($rows as &$row) {
+            if (!is_array($row) || (($row['image_url'] ?? null) !== null)) {
+                continue;
+            }
+
+            $name = (string) ($row['name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+
+            $row['image_url'] = $catalogIndex[$name] ?? null;
+        }
+        unset($row);
+
+        return $rows;
     }
 
     private function generateAiBestDeals(array $report): ?array
@@ -1875,6 +1915,7 @@ PS1;
             'name' => $item['name'],
             'change_24h' => $item['change_vs_yesterday_pct'],
             'price' => $item['current_price'],
+            'image_url' => $item['image_url'] ?? null,
         ];
     }
 
@@ -1884,6 +1925,7 @@ PS1;
             'name' => $item['name'],
             'volume_ratio' => $item['volume_ratio_24h_7d'],
             'volume_24h' => $item['sales_24h_volume'],
+            'image_url' => $item['image_url'] ?? null,
         ];
     }
 

@@ -34,6 +34,23 @@ const escapeHtml = (value) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
+const itemVisual = (item, options = {}) => {
+  const label = escapeHtml(options.label ?? item?.weapon ?? item?.name ?? "CS2");
+  const alt = escapeHtml(item?.name ?? options.label ?? "CS2 item");
+  const imageUrl = item?.image_url ?? item?.icon_url ?? null;
+  const className = options.className ?? "skin-thumb";
+
+  if (imageUrl) {
+    return `
+      <div class="${className} skin-thumb-image">
+        <img src="${escapeHtml(imageUrl)}" alt="${alt}" loading="lazy" referrerpolicy="no-referrer" />
+      </div>
+    `;
+  }
+
+  return `<div class="${className}">${label}</div>`;
+};
+
 const fetchJson = async (path, options = {}) => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -90,7 +107,7 @@ const renderSignals = () => {
   const rows = state.overview?.top_signals ?? [];
   renderSimpleTable("top-signals", rows, (item) => `
     <article class="signal-item">
-      <div class="skin-thumb">${item.weapon ?? "CS2"}</div>
+      ${itemVisual(item)}
       <div class="signal-item-meta">
         <strong>${item.name}</strong>
         <span class="table-meta">${euro(item.current_price)} • ${pct(item.change_24h)}</span>
@@ -125,7 +142,7 @@ const renderOpportunities = () => {
   renderSimpleTable("opportunity-cards", rows, (item) => `
     <article class="opportunity-card">
       <div class="opportunity-top">
-        <div class="skin-thumb">${item.weapon ?? "CS2"}</div>
+        ${itemVisual(item)}
         <div class="opportunity-copy">
           <h5>${item.name}</h5>
           <div class="metric-row">
@@ -280,7 +297,7 @@ const renderReportSummary = () => {
 const renderWatchlist = () => {
   renderSimpleTable("watchlist-table", state.watchlist?.data ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main"><strong>${item.name}</strong><span class="table-meta">${item.note}</span></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">${item.note}</span></div></div>
       <div class="value-stack"><strong>${euro(item.price)}</strong><span class="table-meta">watchlist</span></div>
     </article>
   `);
@@ -289,21 +306,21 @@ const renderWatchlist = () => {
 const renderGainersLosersVolume = () => {
   renderSimpleTable("gainers-list", state.reportToday?.top_gainers ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main"><strong>${item.name}</strong><span class="table-meta">hausse 24h</span></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">hausse 24h</span></div></div>
       <div class="value-stack"><strong class="positive">${pct(item.change_24h)}</strong><span class="table-meta">${euro(item.price)}</span></div>
     </article>
   `);
 
   renderSimpleTable("losers-list", state.reportToday?.top_losers ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main"><strong>${item.name}</strong><span class="table-meta">baisse 24h</span></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">baisse 24h</span></div></div>
       <div class="value-stack"><strong class="negative">${pct(item.change_24h)}</strong><span class="table-meta">${euro(item.price)}</span></div>
     </article>
   `);
 
   renderSimpleTable("volume-list", state.reportToday?.top_volume ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main"><strong>${item.name}</strong><span class="table-meta">accélération de liquidité</span></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">accélération de liquidité</span></div></div>
       <div class="value-stack"><strong>x${(item.volume_ratio ?? 0).toFixed(1).replace(".", ",")}</strong><span class="table-meta">${item.volume_24h ?? 0} ventes</span></div>
     </article>
   `);
@@ -322,6 +339,11 @@ const renderItem = () => {
   const item = state.item;
   if (!item) {
     return;
+  }
+
+  const shot = document.querySelector(".item-shot");
+  if (shot) {
+    shot.innerHTML = itemVisual(item, { className: "skin-thumb large", label: item.weapon ?? item.name });
   }
 
   const title = document.querySelector(".item-copy h4");
