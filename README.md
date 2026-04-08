@@ -131,7 +131,7 @@ Copier `.env.example` si tu veux preparer un environnement de deploy :
 - `CSFLOAT_API_KEY` : recommande, evite les refus HTTP 403 sur l'enrichissement listings CSFloat
 - `OPENROUTER_API_KEY` : active l'analyse IA du rapport avec recherche web OpenRouter
 - `OPENROUTER_MODEL` : modele OpenRouter a utiliser, par defaut `google/gemma-4-26b-a4b-it`
-- `RADAR_STORAGE_PATH` : chemin du stockage JSON. Sur Railway, pointe-le vers ton volume, par exemple `/data/radar`
+- `RADAR_STORAGE_PATH` : chemin du stockage JSON. Sur Railway, pointe-le vers ton volume, par exemple `/data/radar`. Si cette variable est absente mais qu'un volume est monte sur `/data`, l'app bascule automatiquement sur `/data/radar`
 - `SKINPORT_BROWSER_PATH` : optionnel, chemin d'un navigateur Chromium si le runtime n'arrive pas a decoder Brotli via curl
 - `PORT` : utile pour Railway
 
@@ -170,6 +170,7 @@ Si tu veux rester full JSON sans MySQL :
 
 1. cree un volume Railway monte, par exemple sur `/data`
 2. ajoute `RADAR_STORAGE_PATH=/data/radar`
+   ou laisse la variable vide si ton volume est bien monte sur `/data`, l'app detectera automatiquement `/data/radar`
 3. redeploie
 4. verifie `/api/admin/health`
 

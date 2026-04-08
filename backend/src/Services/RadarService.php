@@ -29,7 +29,7 @@ final class RadarService
     {
         ini_set('memory_limit', '1024M');
 
-        $this->storageDir = $this->env('RADAR_STORAGE_PATH') ?? (dirname(__DIR__, 2) . '/storage');
+        $this->storageDir = $this->detectStoragePath();
         $this->snapshotsDir = $this->storageDir . '/snapshots';
         $this->catalogFile = $this->storageDir . '/catalog.json';
         $this->marketFile = $this->storageDir . '/latest_market.json';
@@ -43,6 +43,20 @@ final class RadarService
         $this->ensureDirectories();
         $this->ensureWatchlist();
         $this->refreshStateFile();
+    }
+
+    private function detectStoragePath(): string
+    {
+        $configured = $this->env('RADAR_STORAGE_PATH');
+        if ($configured !== null) {
+            return rtrim($configured, '/\\');
+        }
+
+        if (DIRECTORY_SEPARATOR === '/' && is_dir('/data')) {
+            return '/data/radar';
+        }
+
+        return dirname(__DIR__, 2) . '/storage';
     }
 
     public function overview(): array
