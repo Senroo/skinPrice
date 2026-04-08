@@ -1,0 +1,13 @@
+node_modules/
+dist/
+vendor/
+.env
+.env.local
+coverage/
+.DS_Store
+Thumbs.db
+.chrome-demo/
+backend/storage/*.json
+backend/storage/*.html
+backend/storage/*.ps1
+backend/storage/snapshots/

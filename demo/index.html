@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CS2 Market Daily Radar - Demo</title>
+    <link rel="stylesheet" href="/demo/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <p class="eyebrow">CS2 Market Daily Radar</p>
+          <h1>Daily Radar</h1>
+          <p class="brand-copy">Une démo produit orientée collecte, signaux et décision.</p>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-link is-active" data-view-target="dashboard">Dashboard</button>
+          <button class="nav-link" data-view-target="report">Rapport du jour</button>
+          <button class="nav-link" data-view-target="history">Historique</button>
+          <button class="nav-link" data-view-target="item">Item détail</button>
+          <button class="nav-link" data-view-target="admin">Admin</button>
+        </nav>
+
+        <section class="sidebar-card">
+          <p class="sidebar-title">État du radar</p>
+          <div class="status-line"><span class="dot dot-green"></span><span>Collecte du matin terminée</span></div>
+          <div class="status-line"><span class="dot dot-amber"></span><span>CSFloat en enrichissement partiel</span></div>
+          <div class="status-line"><span class="dot dot-green"></span><span>Rapport du 8 avril prêt</span></div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <header class="hero panel">
+          <div>
+            <p class="eyebrow">Version démo</p>
+            <h2>Vue produit tangible avant branchement des APIs réelles</h2>
+            <p class="hero-copy">
+              Cette maquette simule une journée complète : KPIs, opportunités, rapport illustré,
+              historique et supervision admin.
+            </p>
+          </div>
+          <div class="hero-metrics">
+            <div><span class="hero-label">Date</span><strong>8 avril 2026</strong></div>
+            <div><span class="hero-label">Devise</span><strong>EUR</strong></div>
+            <div><span class="hero-label">Plage suivie</span><strong>5 € - 800 €</strong></div>
+          </div>
+        </header>
+
+        <section class="view is-active" data-view="dashboard">
+          <div class="section-heading">
+            <div>
+              <h3>Dashboard produit</h3>
+              <p>Lecture rapide du marché, des signaux du jour et de la watchlist.</p>
+            </div>
+            <div class="chip-row">
+              <span class="chip">Rifles</span>
+              <span class="chip">Classified+</span>
+              <span class="chip">Score > 70</span>
+            </div>
+          </div>
+
+          <div class="kpi-grid">
+            <article class="kpi-card panel"><span class="kpi-label">Items suivis</span><strong class="kpi-value">1 820</strong><span class="kpi-trend positive">+62 vs hier</span></article>
+            <article class="kpi-card panel"><span class="kpi-label">Dans la tranche 5-800 €</span><strong class="kpi-value">614</strong><span class="kpi-trend neutral">33.7% du catalogue</span></article>
+            <article class="kpi-card panel"><span class="kpi-label">Opportunités détectées</span><strong class="kpi-value">27</strong><span class="kpi-trend positive">+8 signaux forts</span></article>
+            <article class="kpi-card panel"><span class="kpi-label">Watchlist en mouvement</span><strong class="kpi-value">4</strong><span class="kpi-trend negative">2 alertes prudence</span></article>
+          </div>
+
+          <div class="dashboard-layout">
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4>Top signaux du jour</h4>
+                  <p>Les items qui méritent une lecture immédiate.</p>
+                </div>
+                <span class="pill pill-dark">Aujourd’hui</span>
+              </div>
+              <div class="signal-list" id="top-signals"></div>
+            </article>
+
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4>Courbe opportunités</h4>
+                  <p>Nombre de signaux exploitables sur 7 jours.</p>
+                </div>
+                <span class="pill">7 jours</span>
+              </div>
+              <div class="chart-card">
+                <div class="bars" id="opportunity-bars"></div>
+                <div class="axis-row" id="opportunity-axis"></div>
+              </div>
+            </article>
+          </div>
+
+          <div class="dashboard-layout">
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4>Watchlist</h4>
+                  <p>Items suivis de près avec alertes actives.</p>
+                </div>
+                <span class="pill pill-outline">4 actifs</span>
+              </div>
+              <div class="table-list" id="watchlist-table"></div>
+            </article>
+
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4>Filtres simulés</h4>
+                  <p>Projection de l’interface de recherche produit.</p>
+                </div>
+              </div>
+              <div class="filter-grid">
+                <label class="field"><span>Recherche</span><input value="Redline" readonly /></label>
+                <label class="field"><span>Prix min</span><input value="5" readonly /></label>
+                <label class="field"><span>Prix max</span><input value="800" readonly /></label>
+                <label class="field"><span>Volume mini</span><input value="25" readonly /></label>
+                <label class="field"><span>Rareté</span><input value="Classified" readonly /></label>
+                <label class="field"><span>Score mini</span><input value="70" readonly /></label>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="report">
+          <div class="section-heading">
+            <div>
+              <h3>Rapport du jour</h3>
+              <p>Résumé lisible, cartes items illustrées et sections actionnables.</p>
+            </div>
+            <span class="pill pill-dark">Rapport prêt</span>
+          </div>
+
+          <article class="panel summary-panel">
+            <div class="summary-copy">
+              <p class="eyebrow">Résumé IA simulé</p>
+              <h4>Le marché reste sélectif, mais quelques items montrent un réveil propre.</h4>
+              <p>
+                Les opportunités du jour sont surtout portées par un volume en hausse sur des skins déjà liquides.
+                Les meilleures idées restent celles où le prix reste sous la moyenne 7 jours malgré une accélération
+                des transactions. Les hausses les plus violentes restent plus spéculatives et demandent de la prudence.
+              </p>
+            </div>
+            <div class="summary-stats">
+              <div><span>Items analysés</span><strong>1 820</strong></div>
+              <div><span>Retenus 5-800 €</span><strong>614</strong></div>
+              <div><span>Opportunités</span><strong>27</strong></div>
+            </div>
+          </article>
+
+          <div class="section-block">
+            <div class="section-heading compact">
+              <div>
+                <h4>Top opportunités</h4>
+                <p>Les cartes qui mélangent prix, volume et qualité du signal.</p>
+              </div>
+            </div>
+            <div class="opportunity-grid" id="opportunity-cards"></div>
+          </div>
+
+          <div class="triple-grid">
+            <article class="panel"><div class="card-header"><div><h4>Top hausses</h4><p>Variation 24h la plus forte.</p></div></div><div class="table-list" id="gainers-list"></div></article>
+            <article class="panel"><div class="card-header"><div><h4>Top baisses</h4><p>Replis à surveiller ou à exploiter.</p></div></div><div class="table-list" id="losers-list"></div></article>
+            <article class="panel"><div class="card-header"><div><h4>Volume anormal</h4><p>Items avec accélération de liquidité.</p></div></div><div class="table-list" id="volume-list"></div></article>
+          </div>
+        </section>
+
+        <section class="view" data-view="history">
+          <div class="section-heading">
+            <div>
+              <h3>Historique</h3>
+              <p>Lecture des rapports précédents et évolution des opportunités.</p>
+            </div>
+          </div>
+
+          <div class="dashboard-layout">
+            <article class="panel">
+              <div class="card-header"><div><h4>Rapports récents</h4><p>Vue archive avec statut et volume de signaux.</p></div></div>
+              <div class="table-list" id="reports-history"></div>
+            </article>
+
+            <article class="panel">
+              <div class="card-header"><div><h4>Prix moyen watchlist</h4><p>Projection d’un graphe de suivi de portefeuille.</p></div></div>
+              <div class="line-chart">
+                <svg viewBox="0 0 420 180" preserveAspectRatio="none" class="sparkline-large">
+                  <defs>
+                    <linearGradient id="lineFill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stop-color="rgba(181,75,46,0.40)"></stop>
+                      <stop offset="100%" stop-color="rgba(181,75,46,0.02)"></stop>
+                    </linearGradient>
+                  </defs>
+                  <path d="M0 140 C40 132, 60 110, 100 118 S160 148, 210 124 S300 72, 420 76 L420 180 L0 180 Z" fill="url(#lineFill)"></path>
+                  <path d="M0 140 C40 132, 60 110, 100 118 S160 148, 210 124 S300 72, 420 76" fill="none" stroke="#b54b2e" stroke-width="4" stroke-linecap="round"></path>
+                </svg>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="item">
+          <div class="section-heading">
+            <div>
+              <h3>Item détail</h3>
+              <p>Vue typique d’un skin qui remonte dans le rapport du jour.</p>
+            </div>
+          </div>
+
+          <div class="item-layout">
+            <article class="panel item-hero">
+              <div class="item-shot"><div class="skin-thumb large">AK-47</div></div>
+              <div class="item-copy">
+                <p class="eyebrow">Item en focus</p>
+                <h4>AK-47 | Redline (Field-Tested)</h4>
+                <div class="badge-row">
+                  <span class="badge badge-positive">+4.8 % 24h</span>
+                  <span class="badge">Score 78/100</span>
+                  <span class="badge">volume x1.9</span>
+                </div>
+                <p>
+                  Cet item remonte car son prix reste sous la moyenne 7 jours alors que le volume s’accélère
+                  nettement. C’est un profil intéressant pour une watchlist, pas un chase brutal.
+                </p>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="card-header"><div><h4>Historique court</h4><p>Projection des snapshots journaliers.</p></div></div>
+              <div class="table-list" id="item-history"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="admin">
+          <div class="section-heading">
+            <div>
+              <h3>Dashboard admin</h3>
+              <p>Pilotage des jobs, santé des sources et qualité des données.</p>
+            </div>
+            <span class="pill pill-warning">1 source dégradée</span>
+          </div>
+
+          <div class="kpi-grid">
+            <article class="kpi-card panel"><span class="kpi-label">Dernier sync</span><strong class="kpi-value small">06:35</strong><span class="kpi-trend neutral">8 avril 2026</span></article>
+            <article class="kpi-card panel"><span class="kpi-label">Items enrichis image</span><strong class="kpi-value">1 774</strong><span class="kpi-trend positive">97.5%</span></article>
+            <article class="kpi-card panel"><span class="kpi-label">Jobs en erreur</span><strong class="kpi-value">1</strong><span class="kpi-trend negative">CSFloat timeout</span></article>
+            <article class="kpi-card panel"><span class="kpi-label">Rapports générés</span><strong class="kpi-value">31</strong><span class="kpi-trend neutral">Historique mensuel</span></article>
+          </div>
+
+          <div class="dashboard-layout">
+            <article class="panel"><div class="card-header"><div><h4>État des APIs</h4><p>Lecture rapide par source externe.</p></div></div><div class="table-list" id="api-health"></div></article>
+            <article class="panel"><div class="card-header"><div><h4>Logs des jobs</h4><p>Les derniers runs visibles côté exploitation.</p></div></div><div class="log-list" id="job-logs"></div></article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/demo/app.js"></script>
+  </body>
+</html>
