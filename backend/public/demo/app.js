@@ -8,6 +8,8 @@ const state = {
   health: null,
   jobs: null,
   watchlist: null,
+  activeView: "dashboard",
+  lastNonItemView: "dashboard",
 };
 
 const euro = (value) => {
@@ -142,17 +144,29 @@ const formatCooldown = (seconds) => {
   return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
 };
 
+const activateView = (target) => {
+  if (!target) {
+    return;
+  }
+
+  document.querySelectorAll("[data-view-target]").forEach((entry) => entry.classList.remove("is-active"));
+  document.querySelectorAll("[data-view]").forEach((entry) => entry.classList.remove("is-active"));
+  document.querySelector(`[data-view-target="${target}"]`)?.classList.add("is-active");
+  document.querySelector(`[data-view="${target}"]`)?.classList.add("is-active");
+
+  if (target !== "item") {
+    state.lastNonItemView = target;
+  }
+
+  state.activeView = target;
+};
+
 const bindViews = () => {
   const buttons = document.querySelectorAll("[data-view-target]");
-  const views = document.querySelectorAll("[data-view]");
 
   buttons.forEach((button) => {
     button.addEventListener("click", () => {
-      const target = button.dataset.viewTarget;
-      buttons.forEach((entry) => entry.classList.remove("is-active"));
-      views.forEach((view) => view.classList.remove("is-active"));
-      button.classList.add("is-active");
-      document.querySelector(`[data-view="${target}"]`)?.classList.add("is-active");
+      activateView(button.dataset.viewTarget);
     });
   });
 };
@@ -555,12 +569,13 @@ const openItemView = async (itemId) => {
     return;
   }
 
+  if (state.activeView && state.activeView !== "item") {
+    state.lastNonItemView = state.activeView;
+  }
+
   state.item = await fetchJson(`/api/items/${itemId}`);
   renderItem();
-  document.querySelectorAll("[data-view-target]").forEach((entry) => entry.classList.remove("is-active"));
-  document.querySelectorAll("[data-view]").forEach((entry) => entry.classList.remove("is-active"));
-  document.querySelector('[data-view-target="item"]')?.classList.add("is-active");
-  document.querySelector('[data-view="item"]')?.classList.add("is-active");
+  activateView("item");
 };
 
 const bindItemOpenActions = () => {
@@ -676,6 +691,28 @@ const renderItemLinked = () => {
   const item = state.item;
   if (!item) {
     return;
+  }
+
+  const sectionHeading = document.querySelector('[data-view="item"] .section-heading');
+  let backButton = document.getElementById("item-back-button");
+  if (!backButton && sectionHeading) {
+    backButton = document.createElement("button");
+    backButton.id = "item-back-button";
+    backButton.type = "button";
+    backButton.className = "item-link item-link-button";
+    sectionHeading.appendChild(backButton);
+  }
+
+  if (backButton) {
+    const targetView = state.lastNonItemView || "dashboard";
+    const labels = {
+      dashboard: "Retour dashboard",
+      report: "Retour rapport",
+      history: "Retour historique",
+      admin: "Retour admin",
+    };
+    backButton.textContent = labels[targetView] ?? "Retour";
+    backButton.onclick = () => activateView(targetView);
   }
 
   let actionRow = document.getElementById("item-action-row");
