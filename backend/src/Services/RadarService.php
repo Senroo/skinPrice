@@ -23,12 +23,13 @@ final class RadarService
     private string $reportsFile;
     private string $jobsFile;
     private string $watchlistFile;
+    private string $stateFile;
 
     public function __construct()
     {
         ini_set('memory_limit', '1024M');
 
-        $this->storageDir = dirname(__DIR__, 2) . '/storage';
+        $this->storageDir = $this->env('RADAR_STORAGE_PATH') ?? (dirname(__DIR__, 2) . '/storage');
         $this->snapshotsDir = $this->storageDir . '/snapshots';
         $this->catalogFile = $this->storageDir . '/catalog.json';
         $this->marketFile = $this->storageDir . '/latest_market.json';
@@ -37,9 +38,11 @@ final class RadarService
         $this->reportsFile = $this->storageDir . '/reports.json';
         $this->jobsFile = $this->storageDir . '/jobs.json';
         $this->watchlistFile = $this->storageDir . '/watchlist.json';
+        $this->stateFile = $this->storageDir . '/radar_state.json';
 
         $this->ensureDirectories();
         $this->ensureWatchlist();
+        $this->refreshStateFile();
     }
 
     public function overview(): array
@@ -249,6 +252,9 @@ final class RadarService
         return [
             'status' => $this->deriveGlobalHealth($latestJobs),
             'last_sync_at' => $market['synced_at'] ?? $catalog['synced_at'] ?? null,
+            'storage_path' => $this->storageDir,
+            'state_file_path' => $this->stateFile,
+            'state_file_exists' => is_file($this->stateFile),
             'market_sync_cooldown_remaining' => $marketCooldownRemaining,
             'market_sync_available' => $marketCooldownRemaining === 0,
             'csfloat_sync_cooldown_remaining' => $csfloatCooldownRemaining,
@@ -1035,6 +1041,10 @@ PS1;
         }
 
         file_put_contents($path, $json);
+
+        if ($path !== $this->stateFile) {
+            $this->refreshStateFile();
+        }
     }
 
     private function buildOpportunitySeries(): array
@@ -1054,6 +1064,94 @@ PS1;
     {
         $reports = $this->readJson($this->reportsFile, []);
         return $reports[0] ?? [];
+    }
+
+    private function refreshStateFile(): void
+    {
+        $state = $this->buildCanonicalState();
+        $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            return;
+        }
+
+        file_put_contents($this->stateFile, $json);
+    }
+
+    private function buildCanonicalState(): array
+    {
+        $catalog = $this->readJson($this->catalogFile, ['items' => []]);
+        $market = $this->readJson($this->marketFile, ['items' => []]);
+        $marketBackup = $this->readJson($this->marketBackupFile, ['items' => []]);
+        $reports = $this->readJson($this->reportsFile, []);
+        $latestReport = $reports[0] ?? [];
+        $jobs = $this->readJson($this->jobsFile, []);
+        $watchlist = $this->readJson($this->watchlistFile, []);
+        $csfloat = $this->readJson($this->csfloatSignalsFile, ['signals' => []]);
+
+        return [
+            'generated_at' => date(DATE_ATOM),
+            'storage_path' => $this->storageDir,
+            'latest_report_context' => [
+                'date' => $latestReport['date'] ?? null,
+                'summary_text' => $latestReport['summary_text'] ?? null,
+                'ai_best_deals_title' => $latestReport['ai_best_deals_title'] ?? null,
+                'ai_best_deals_text' => $latestReport['ai_best_deals_text'] ?? null,
+                'top_opportunities' => array_slice($latestReport['top_opportunities'] ?? [], 0, 8),
+                'top_gainers' => array_slice($latestReport['top_gainers'] ?? [], 0, 8),
+                'top_losers' => array_slice($latestReport['top_losers'] ?? [], 0, 8),
+                'top_volume' => array_slice($latestReport['top_volume'] ?? [], 0, 8),
+                'watchlist_moves' => array_slice($latestReport['watchlist_moves'] ?? [], 0, 8),
+            ],
+            'stats' => [
+                'catalog_items' => count($catalog['items'] ?? []),
+                'market_items' => count($market['items'] ?? []),
+                'market_backup_items' => count($marketBackup['items'] ?? []),
+                'reports_count' => count($reports),
+                'watchlist_count' => count($watchlist),
+                'csfloat_signals_count' => count($csfloat['signals'] ?? []),
+            ],
+            'catalog' => $catalog,
+            'market' => $market,
+            'market_backup' => $marketBackup,
+            'reports' => $reports,
+            'watchlist' => $watchlist,
+            'jobs' => $jobs,
+            'csfloat' => $csfloat,
+        ];
+    }
+
+    private function readCanonicalState(): array
+    {
+        return $this->readJson($this->stateFile, []);
+    }
+
+    private function aiPayloadFromCanonicalState(array $report): array
+    {
+        $state = $this->readCanonicalState();
+        if ($state === []) {
+            $state = $this->buildCanonicalState();
+        }
+
+        $state['latest_report_context'] = [
+            'date' => $report['date'] ?? null,
+            'summary_text' => $report['summary_text'] ?? null,
+            'top_opportunities' => array_slice($report['top_opportunities'] ?? [], 0, 8),
+            'top_gainers' => array_slice($report['top_gainers'] ?? [], 0, 8),
+            'top_losers' => array_slice($report['top_losers'] ?? [], 0, 8),
+            'top_volume' => array_slice($report['top_volume'] ?? [], 0, 8),
+            'watchlist_moves' => array_slice($report['watchlist_moves'] ?? [], 0, 8),
+        ];
+
+        return [
+            'generated_at' => $state['generated_at'] ?? date(DATE_ATOM),
+            'storage_path' => $state['storage_path'] ?? $this->storageDir,
+            'stats' => $state['stats'] ?? [],
+            'latest_report_context' => $state['latest_report_context'] ?? [],
+            'market_sample' => array_slice($state['market']['items'] ?? [], 0, 50),
+            'watchlist' => array_slice($state['watchlist'] ?? [], 0, 20),
+            'recent_jobs' => array_slice($state['jobs'] ?? [], 0, 10),
+            'csfloat_signals_sample' => array_slice($state['csfloat']['signals'] ?? [], 0, 20),
+        ];
     }
 
     private function normalizeReport(array $report): array
@@ -1086,8 +1184,8 @@ PS1;
                 [
                     'role' => 'user',
                     'content' => json_encode([
-                        'task' => 'Trouve les meilleures affaires du jour a partir du rapport CS2 ci-dessous. Utilise la recherche web seulement pour confirmer le contexte public recent ou signaler un risque de liquidite. Si tu n as pas assez d elements, dis-le clairement.',
-                        'report' => $report,
+                        'task' => 'Lis ce JSON canonique stocke par l application. Base ton analyse sur latest_report_context, les echantillons marche, la watchlist et les signaux CSFloat. Utilise la recherche web seulement pour confirmer le contexte public recent ou signaler un risque de liquidite. Si tu n as pas assez d elements, dis-le clairement.',
+                        'canonical_state' => $this->aiPayloadFromCanonicalState($report),
                     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 ],
             ],

@@ -131,6 +131,7 @@ Copier `.env.example` si tu veux preparer un environnement de deploy :
 - `CSFLOAT_API_KEY` : recommande, evite les refus HTTP 403 sur l'enrichissement listings CSFloat
 - `OPENROUTER_API_KEY` : active l'analyse IA du rapport avec recherche web OpenRouter
 - `OPENROUTER_MODEL` : modele OpenRouter a utiliser, par defaut `google/gemma-4-26b-a4b-it`
+- `RADAR_STORAGE_PATH` : chemin du stockage JSON. Sur Railway, pointe-le vers ton volume, par exemple `/data/radar`
 - `SKINPORT_BROWSER_PATH` : optionnel, chemin d'un navigateur Chromium si le runtime n'arrive pas a decoder Brotli via curl
 - `PORT` : utile pour Railway
 
@@ -160,7 +161,38 @@ Note importante :
 
 - le stockage actuel est en JSON local dans `backend/storage`
 - sur Railway ce stockage n'est pas durable apres redeploiement
-- pour une vraie prod il faut passer rapidement a MySQL Railway pour les snapshots, rapports et signaux
+- tu peux maintenant le rendre durable avec un volume Railway en definissant `RADAR_STORAGE_PATH=/data/radar`
+- l'app ecrit aussi un fichier canonique `radar_state.json` dans ce dossier pour que l'IA relise toujours la meme source de verite JSON
+
+## Stockage JSON sur volume Railway
+
+Si tu veux rester full JSON sans MySQL :
+
+1. cree un volume Railway monte, par exemple sur `/data`
+2. ajoute `RADAR_STORAGE_PATH=/data/radar`
+3. redeploie
+4. verifie `/api/admin/health`
+
+Tu y verras :
+
+- `storage_path`
+- `state_file_path`
+- `state_file_exists`
+
+Le fichier cle devient :
+
+- `/data/radar/radar_state.json`
+
+Ce JSON canonique contient :
+
+- catalogue
+- marche live
+- backup marche
+- rapports
+- watchlist
+- jobs
+- signaux CSFloat
+- bloc `latest_report_context` pense pour l'analyse IA
 
 ## Prochaine etape recommandee
 
