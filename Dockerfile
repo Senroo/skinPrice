@@ -2,8 +2,6 @@ FROM php:8.3-cli-alpine
 
 WORKDIR /app
 
-RUN docker-php-ext-install curl
-
 COPY . .
 
 EXPOSE 8080
