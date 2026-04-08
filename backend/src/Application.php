@@ -10,10 +10,15 @@ use App\Support\JsonResponse;
 
 final class Application
 {
+    private ?PublicController $publicController;
+    private ?AdminController $adminController;
+
     public function __construct(
-        private readonly PublicController $publicController = new PublicController(),
-        private readonly AdminController $adminController = new AdminController(),
+        ?PublicController $publicController = null,
+        ?AdminController $adminController = null,
     ) {
+        $this->publicController = $publicController;
+        $this->adminController = $adminController;
     }
 
     public function handle(string $method, string $uri): void
@@ -32,62 +37,62 @@ final class Application
             }
 
             if ($method === 'GET' && $path === '/api/dashboard/overview') {
-                JsonResponse::send($this->publicController->overview());
+                JsonResponse::send($this->publicController()->overview());
                 return;
             }
 
             if ($method === 'GET' && $path === '/api/items') {
-                JsonResponse::send($this->publicController->items());
+                JsonResponse::send($this->publicController()->items());
                 return;
             }
 
             if ($method === 'GET' && preg_match('#^/api/items/(?P<id>\d+)$#', $path, $matches) === 1) {
-                JsonResponse::send($this->publicController->item((int) $matches['id']));
+                JsonResponse::send($this->publicController()->item((int) $matches['id']));
                 return;
             }
 
             if ($method === 'GET' && $path === '/api/reports/today') {
-                JsonResponse::send($this->publicController->reportToday());
+                JsonResponse::send($this->publicController()->reportToday());
                 return;
             }
 
             if ($method === 'GET' && $path === '/api/reports/history') {
-                JsonResponse::send($this->publicController->reportHistory());
+                JsonResponse::send($this->publicController()->reportHistory());
                 return;
             }
 
             if ($method === 'GET' && $path === '/api/watchlist') {
-                JsonResponse::send($this->publicController->watchlist());
+                JsonResponse::send($this->publicController()->watchlist());
                 return;
             }
 
             if ($method === 'GET' && $path === '/api/admin/health') {
-                JsonResponse::send($this->adminController->health());
+                JsonResponse::send($this->adminController()->health());
                 return;
             }
 
             if ($method === 'GET' && $path === '/api/admin/jobs') {
-                JsonResponse::send($this->adminController->jobs());
+                JsonResponse::send($this->adminController()->jobs());
                 return;
             }
 
             if ($method === 'POST' && $path === '/api/admin/jobs/sync-catalog') {
-                JsonResponse::send($this->adminController->trigger('sync-catalog'));
+                JsonResponse::send($this->adminController()->trigger('sync-catalog'));
                 return;
             }
 
             if ($method === 'POST' && $path === '/api/admin/jobs/sync-market') {
-                JsonResponse::send($this->adminController->trigger('sync-market'));
+                JsonResponse::send($this->adminController()->trigger('sync-market'));
                 return;
             }
 
             if ($method === 'POST' && $path === '/api/admin/jobs/sync-csfloat') {
-                JsonResponse::send($this->adminController->trigger('sync-csfloat'));
+                JsonResponse::send($this->adminController()->trigger('sync-csfloat'));
                 return;
             }
 
             if ($method === 'POST' && $path === '/api/admin/jobs/generate-report') {
-                JsonResponse::send($this->adminController->trigger('generate-report'));
+                JsonResponse::send($this->adminController()->trigger('generate-report'));
                 return;
             }
 
@@ -102,5 +107,15 @@ final class Application
                 'type' => $throwable::class,
             ], 500);
         }
+    }
+
+    private function publicController(): PublicController
+    {
+        return $this->publicController ??= new PublicController();
+    }
+
+    private function adminController(): AdminController
+    {
+        return $this->adminController ??= new AdminController();
     }
 }

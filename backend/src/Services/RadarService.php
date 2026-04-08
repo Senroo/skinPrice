@@ -42,7 +42,6 @@ final class RadarService
 
         $this->ensureDirectories();
         $this->ensureWatchlist();
-        $this->refreshStateFile();
     }
 
     private function detectStoragePath(): string
