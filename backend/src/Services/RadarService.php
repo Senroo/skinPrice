@@ -10,6 +10,9 @@ final class RadarService
 {
     private const OPPORTUNITY_THRESHOLD = 60;
     private const MARKET_SYNC_COOLDOWN_SECONDS = 330;
+    private const CSFLOAT_SYNC_COOLDOWN_SECONDS = 180;
+    private const CSFLOAT_TARGETS_PER_RUN = 4;
+    private const CSFLOAT_REQUEST_DELAY_US = 1200000;
 
     private string $storageDir;
     private string $snapshotsDir;
@@ -236,6 +239,7 @@ final class RadarService
         $catalog = $this->readJson($this->catalogFile, []);
         $market = $this->readMarketData();
         $marketCooldownRemaining = $this->marketSyncCooldownRemaining();
+        $csfloatCooldownRemaining = $this->csfloatSyncCooldownRemaining();
         $csfloat = $this->readJson($this->csfloatSignalsFile, []);
         $csfloatSignals = $csfloat['signals'] ?? [];
         $csfloatConfigured = $this->csfloatIsConfigured();
@@ -246,6 +250,8 @@ final class RadarService
             'last_sync_at' => $market['synced_at'] ?? $catalog['synced_at'] ?? null,
             'market_sync_cooldown_remaining' => $marketCooldownRemaining,
             'market_sync_available' => $marketCooldownRemaining === 0,
+            'csfloat_sync_cooldown_remaining' => $csfloatCooldownRemaining,
+            'csfloat_sync_available' => $csfloatCooldownRemaining === 0,
             'sources' => [
                 ['name' => 'ByMykel', 'status' => isset($catalog['synced_at']) ? 'ok' : 'unknown', 'note' => isset($catalog['synced_at']) ? 'catalogue et images synchronises' : 'catalogue non synchronise'],
                 ['name' => 'Skinport', 'status' => isset($market['synced_at']) ? 'ok' : 'unknown', 'note' => isset($market['synced_at']) ? 'prix et historique synchronises' : 'market non synchronise'],
@@ -277,6 +283,9 @@ final class RadarService
     {
         if ($jobName === 'sync-market') {
             $this->assertMarketSyncCooldown();
+        }
+        if ($jobName === 'sync-csfloat') {
+            $this->assertCsfloatSyncCooldown();
         }
 
         return match ($jobName) {
@@ -507,7 +516,9 @@ final class RadarService
         }
 
         $signals = [];
-        foreach ($targets as $target) {
+        $rateLimited = false;
+        $processedTargets = 0;
+        foreach ($targets as $index => $target) {
             $url = 'https://csfloat.com/api/v1/listings?limit=5&sort_by=lowest_price&market_hash_name=' . rawurlencode($target['market_hash_name']);
             $headers = [];
             $apiKey = $this->env('CSFLOAT_API_KEY');
@@ -515,7 +526,18 @@ final class RadarService
                 $headers[] = 'Authorization: ' . $apiKey;
             }
 
-            $payload = $this->fetchJsonWithCurl($url, $headers, 45);
+            try {
+                $payload = $this->fetchJsonWithCurl($url, $headers, 45);
+            } catch (RuntimeException $exception) {
+                if ($this->isRateLimitError($exception->getMessage())) {
+                    $rateLimited = true;
+                    break;
+                }
+
+                throw $exception;
+            }
+
+            $processedTargets++;
             $listings = isset($payload['data']) && is_array($payload['data'])
                 ? $payload['data']
                 : (array_is_list($payload) ? $payload : []);
@@ -530,20 +552,35 @@ final class RadarService
                     $signals[] = $signal;
                 }
             }
+
+            if ($index < count($targets) - 1) {
+                usleep(self::CSFLOAT_REQUEST_DELAY_US);
+            }
         }
 
-        $data = [
-            'synced_at' => date(DATE_ATOM),
-            'targets' => array_map(static fn (array $target): string => $target['market_hash_name'], $targets),
-            'signals' => $signals,
-        ];
+        if ($signals !== []) {
+            $data = [
+                'synced_at' => date(DATE_ATOM),
+                'targets' => array_map(static fn (array $target): string => $target['market_hash_name'], $targets),
+                'signals' => $signals,
+                'truncated_due_to_rate_limit' => $rateLimited,
+            ];
 
-        $this->writeJson($this->csfloatSignalsFile, $data);
+            $this->writeJson($this->csfloatSignalsFile, $data);
+        }
+
+        if ($processedTargets === 0 && $rateLimited) {
+            throw new RuntimeException(sprintf(
+                'CSFloat rate limited the sync before any target could be processed. Wait %d seconds before retrying.',
+                self::CSFLOAT_SYNC_COOLDOWN_SECONDS
+            ));
+        }
 
         return [
-            'synced_at' => $data['synced_at'],
+            'synced_at' => date(DATE_ATOM),
             'items_processed' => count($signals),
-            'targets' => count($targets),
+            'targets' => $processedTargets,
+            'rate_limited' => $rateLimited,
         ];
     }
 
@@ -860,6 +897,19 @@ PS1;
         ));
     }
 
+    private function assertCsfloatSyncCooldown(): void
+    {
+        $remaining = $this->csfloatSyncCooldownRemaining();
+        if ($remaining <= 0) {
+            return;
+        }
+
+        throw new RuntimeException(sprintf(
+            'sync-csfloat is on cooldown for %d seconds to respect the CSFloat rate limit.',
+            $remaining
+        ));
+    }
+
     private function marketSyncCooldownRemaining(): int
     {
         $jobs = $this->readJson($this->jobsFile, []);
@@ -876,6 +926,30 @@ PS1;
             $elapsed = time() - $startedAt;
             if ($elapsed < self::MARKET_SYNC_COOLDOWN_SECONDS) {
                 return self::MARKET_SYNC_COOLDOWN_SECONDS - $elapsed;
+            }
+
+            return 0;
+        }
+
+        return 0;
+    }
+
+    private function csfloatSyncCooldownRemaining(): int
+    {
+        $jobs = $this->readJson($this->jobsFile, []);
+        foreach ($jobs as $job) {
+            if (($job['job_name'] ?? null) !== 'sync-csfloat') {
+                continue;
+            }
+
+            $startedAt = strtotime((string) ($job['started_at'] ?? ''));
+            if ($startedAt === false) {
+                return 0;
+            }
+
+            $elapsed = time() - $startedAt;
+            if ($elapsed < self::CSFLOAT_SYNC_COOLDOWN_SECONDS) {
+                return self::CSFLOAT_SYNC_COOLDOWN_SECONDS - $elapsed;
             }
 
             return 0;
@@ -1152,7 +1226,7 @@ PS1;
     {
         $targets = [];
         $market = $this->readMarketData();
-        foreach (array_slice($market['items'] ?? [], 0, 8) as $item) {
+        foreach (array_slice($market['items'] ?? [], 0, self::CSFLOAT_TARGETS_PER_RUN) as $item) {
             $targets[$item['market_hash_name']] = [
                 'id' => $item['id'],
                 'market_hash_name' => $item['market_hash_name'],
@@ -1189,7 +1263,7 @@ PS1;
             }
         }
 
-        return array_slice(array_values($targets), 0, 12);
+        return array_slice(array_values($targets), 0, self::CSFLOAT_TARGETS_PER_RUN);
     }
 
     private function mapCsfloatListing(array $listing, array $target): ?array
@@ -1299,6 +1373,13 @@ PS1;
     private function csfloatIsConfigured(): bool
     {
         return $this->env('CSFLOAT_API_KEY') !== null;
+    }
+
+    private function isRateLimitError(string $message): bool
+    {
+        return str_contains($message, 'HTTP status 429')
+            || str_contains($message, 'rate limited')
+            || str_contains($message, 'Too Many Requests');
     }
 
     private function env(string $name): ?string

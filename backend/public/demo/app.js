@@ -286,20 +286,37 @@ const renderJobs = () => {
 const renderAdminActionsState = () => {
   const health = state.health;
   const syncMarketButton = document.querySelector('[data-job="sync-market"]');
+  const syncCsfloatButton = document.querySelector('[data-job="sync-csfloat"]');
   const cooldownNode = document.getElementById("market-cooldown");
 
-  if (!health || !syncMarketButton || !cooldownNode) {
+  if (!health || !syncMarketButton || !syncCsfloatButton || !cooldownNode) {
     return;
   }
 
-  const remaining = Number(health.market_sync_cooldown_remaining ?? 0);
-  const available = Boolean(health.market_sync_available ?? remaining === 0);
+  const marketRemaining = Number(health.market_sync_cooldown_remaining ?? 0);
+  const marketAvailable = Boolean(health.market_sync_available ?? marketRemaining === 0);
+  const csfloatRemaining = Number(health.csfloat_sync_cooldown_remaining ?? 0);
+  const csfloatAvailable = Boolean(health.csfloat_sync_available ?? csfloatRemaining === 0);
 
-  syncMarketButton.disabled = !available;
-  syncMarketButton.textContent = available ? "Sync market" : `Sync market (${formatCooldown(remaining)})`;
-  cooldownNode.textContent = available
-    ? "Skinport est disponible pour un nouveau sync."
-    : `Skinport est en cooldown. Prochain lancement possible dans ${formatCooldown(remaining)}.`;
+  syncMarketButton.disabled = !marketAvailable;
+  syncMarketButton.textContent = marketAvailable ? "Sync market" : `Sync market (${formatCooldown(marketRemaining)})`;
+
+  syncCsfloatButton.disabled = !csfloatAvailable;
+  syncCsfloatButton.textContent = csfloatAvailable ? "Sync CSFloat" : `Sync CSFloat (${formatCooldown(csfloatRemaining)})`;
+
+  const lines = [];
+  lines.push(
+    marketAvailable
+      ? "Skinport est disponible pour un nouveau sync."
+      : `Skinport est en cooldown. Prochain lancement possible dans ${formatCooldown(marketRemaining)}.`
+  );
+  lines.push(
+    csfloatAvailable
+      ? "CSFloat est disponible pour un nouveau sync."
+      : `CSFloat est en cooldown. Prochain lancement possible dans ${formatCooldown(csfloatRemaining)}.`
+  );
+
+  cooldownNode.textContent = lines.join(" ");
 };
 
 const renderAll = () => {
