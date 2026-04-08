@@ -450,6 +450,36 @@ button { border: 0; }
   gap: 8px;
 }
 
+.ai-card {
+  padding: 16px 18px;
+}
+
+.ai-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ai-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(182, 77, 47, 0.08);
+  border: 1px solid rgba(182, 77, 47, 0.14);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.1;
+  max-width: 100%;
+}
+
+.ai-badge-primary {
+  background: rgba(182, 77, 47, 0.14);
+  color: var(--accent);
+}
+
 .ai-section .value-stack {
   text-align: left;
   gap: 2px;

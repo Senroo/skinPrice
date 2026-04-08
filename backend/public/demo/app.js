@@ -90,12 +90,15 @@ const aiSection = (title, cards, emptyText) => `
           ? cards
               .map(
                 (card) => `
-                <article class="table-item">
+                <article class="table-item ai-card">
                   <div class="table-item-main">
                     <strong>${escapeHtml(card.name)}</strong>
                     <span class="table-meta">${escapeHtml(card.rationale)}</span>
+                    <div class="ai-badge-row">
+                      <span class="ai-badge ai-badge-primary">${escapeHtml(card.verdict || "A surveiller")}</span>
+                      <span class="ai-badge">${escapeHtml(title)}</span>
+                    </div>
                   </div>
-                  <div class="value-stack">
                     <strong>${escapeHtml(card.verdict || "À surveiller")}</strong>
                     <span class="table-meta">${escapeHtml(title)}</span>
                   </div>
@@ -125,10 +128,14 @@ const aiWatchlistSection = (title, actions, emptyText) => `
           ? actions
               .map(
                 (action) => `
-                <article class="table-item">
+                <article class="table-item ai-card">
                   <div class="table-item-main">
                     <strong>${escapeHtml(action.name)}</strong>
                     <span class="table-meta">${escapeHtml(action.rationale || action.note || "")}</span>
+                    <div class="ai-badge-row">
+                      <span class="ai-badge ai-badge-primary">${escapeHtml((action.action || "keep").toUpperCase())}</span>
+                      <span class="ai-badge">${escapeHtml(action.note || "watchlist IA")}</span>
+                    </div>
                   </div>
                   <div class="value-stack">
                     <strong>${escapeHtml((action.action || "keep").toUpperCase())}</strong>
@@ -140,6 +147,76 @@ const aiWatchlistSection = (title, actions, emptyText) => `
               .join("")
           : `
             <article class="table-item">
+              <div class="table-item-main">
+                <strong>Aucun ajustement IA applique</strong>
+                <span class="table-meta">${escapeHtml(emptyText)}</span>
+              </div>
+            </article>
+          `
+      }
+    </div>
+  </div>
+`;
+
+const renderAiCardList = (title, cards, emptyText, options = {}) => `
+  <div class="ai-section">
+    <h5>${escapeHtml(title)}</h5>
+    <div class="table-list">
+      ${
+        (cards ?? []).length > 0
+          ? cards
+              .map(
+                (card) => `
+                <article class="table-item ai-card">
+                  <div class="table-item-main">
+                    <strong>${escapeHtml(card.name)}</strong>
+                    <span class="table-meta">${escapeHtml(card.rationale || "")}</span>
+                    <div class="ai-badge-row">
+                      <span class="ai-badge ai-badge-primary">${escapeHtml(card.verdict || options.primaryFallback || "A surveiller")}</span>
+                      <span class="ai-badge">${escapeHtml(options.secondaryLabel || title)}</span>
+                    </div>
+                  </div>
+                </article>
+              `
+              )
+              .join("")
+          : `
+            <article class="table-item ai-card">
+              <div class="table-item-main">
+                <strong>Rien de marquant pour cette section</strong>
+                <span class="table-meta">${escapeHtml(emptyText)}</span>
+              </div>
+            </article>
+          `
+      }
+    </div>
+  </div>
+`;
+
+const renderAiWatchlistList = (title, actions, emptyText) => `
+  <div class="ai-section">
+    <h5>${escapeHtml(title)}</h5>
+    <div class="table-list">
+      ${
+        (actions ?? []).length > 0
+          ? actions
+              .map(
+                (action) => `
+                <article class="table-item ai-card">
+                  <div class="table-item-main">
+                    <strong>${escapeHtml(action.name)}</strong>
+                    <span class="table-meta">${escapeHtml(action.rationale || action.note || "")}</span>
+                    <div class="ai-badge-row">
+                      <span class="ai-badge ai-badge-primary">${escapeHtml((action.action || "keep").toUpperCase())}</span>
+                      <span class="ai-badge">${escapeHtml(action.note || "watchlist IA")}</span>
+                    </div>
+                  </div>
+                </article>
+              `
+              )
+              .join("")
+          : `
+            <article class="table-item ai-card">
               <div class="table-item-main">
                 <strong>Aucun ajustement IA applique</strong>
                 <span class="table-meta">${escapeHtml(emptyText)}</span>
@@ -365,12 +442,15 @@ const renderReportSummary = () => {
         ? cards
             .map(
               (card) => `
-              <article class="table-item">
+              <article class="table-item ai-card">
                 <div class="table-item-main">
                   <strong>${escapeHtml(card.name)}</strong>
                   <span class="table-meta">${escapeHtml(card.rationale)}</span>
+                  <div class="ai-badge-row">
+                    <span class="ai-badge ai-badge-primary">${escapeHtml(card.verdict || "A surveiller")}</span>
+                    <span class="ai-badge">meilleure affaire</span>
+                  </div>
                 </div>
-                <div class="value-stack">
                   <strong>${escapeHtml(card.verdict || "À surveiller")}</strong>
                   <span class="table-meta">meilleure affaire</span>
                 </div>
@@ -427,6 +507,40 @@ const renderReportSummary = () => {
         "Aucun item stable supplementaire n'a ete mis en avant par l'analyse IA."
       ),
       aiWatchlistSection(
+        "Mouvements de watchlist",
+        report.ai_watchlist_actions ?? [],
+        "L'analyse IA n'a ni ajoute ni retire d'item sur ce run."
+      ),
+    ].join("");
+  }
+
+  if (cardsRoot) {
+    cardsRoot.innerHTML = renderAiCardList(
+      "Meilleures affaires",
+      report.ai_best_deals_cards ?? [],
+      "Le rapport reste disponible, mais l'analyse web n'a pas encore produit de shortlist exploitable.",
+      { secondaryLabel: "meilleure affaire" }
+    );
+  }
+
+  if (secondaryRoot) {
+    secondaryRoot.innerHTML = [
+      renderAiCardList(
+        "Risques du jour",
+        report.ai_risk_cards ?? [],
+        "Aucun risque prioritaire n'a ete isole par l'analyse IA."
+      ),
+      renderAiCardList(
+        "Faux signaux",
+        report.ai_false_signal_cards ?? [],
+        "L'analyse IA n'a pas releve de faux signal dominant sur cet echantillon."
+      ),
+      renderAiCardList(
+        "Items stables a surveiller",
+        report.ai_stable_watch_cards ?? [],
+        "Aucun item stable supplementaire n'a ete mis en avant par l'analyse IA."
+      ),
+      renderAiWatchlistList(
         "Mouvements de watchlist",
         report.ai_watchlist_actions ?? [],
         "L'analyse IA n'a ni ajoute ni retire d'item sur ce run."
