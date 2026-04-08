@@ -1,0 +1,7 @@
+.git
+.gitignore
+.chrome-demo
+backend/storage
+frontend/node_modules
+frontend/dist
+demo-dashboard.png
