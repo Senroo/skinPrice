@@ -149,6 +149,8 @@ final class RadarService
                 'stattrak' => $item['stattrak'],
                 'souvenir' => $item['souvenir'],
                 'image_url' => $item['image_url'],
+                'item_page' => $item['item_page'] ?? null,
+                'market_page' => $item['market_page'] ?? null,
                 'latest_snapshot' => [
                     'snapshot_date' => $market['date'] ?? date('Y-m-d'),
                     'current_price' => $item['current_price'],
@@ -227,10 +229,13 @@ final class RadarService
             $marketItem = $marketIndex[$entry['market_hash_name']] ?? null;
             $catalogItem = $catalogIndex[$entry['market_hash_name']] ?? null;
             $data[] = [
+                'id' => $marketItem['id'] ?? $this->idFromName((string) $entry['market_hash_name']),
                 'name' => $entry['market_hash_name'],
                 'price' => $marketItem['current_price'] ?? null,
                 'note' => $entry['note'],
                 'image_url' => $marketItem['image_url'] ?? $catalogItem['image_url'] ?? null,
+                'item_page' => $marketItem['item_page'] ?? null,
+                'market_page' => $marketItem['market_page'] ?? null,
                 'is_active' => true,
             ];
         }
@@ -1186,12 +1191,18 @@ PS1;
 
         $catalogIndex = [];
         foreach (($this->readJson($this->catalogFile, ['items' => []])['items'] ?? []) as $item) {
-            $catalogIndex[$item['market_hash_name']] = $item['image_url'] ?? null;
-            $catalogIndex[$item['name'] ?? $item['market_hash_name']] = $item['image_url'] ?? null;
+            $catalogIndex[$item['market_hash_name']] = [
+                'id' => $item['id'] ?? null,
+                'image_url' => $item['image_url'] ?? null,
+            ];
+            $catalogIndex[$item['name'] ?? $item['market_hash_name']] = [
+                'id' => $item['id'] ?? null,
+                'image_url' => $item['image_url'] ?? null,
+            ];
         }
 
         foreach ($rows as &$row) {
-            if (!is_array($row) || (($row['image_url'] ?? null) !== null)) {
+            if (!is_array($row)) {
                 continue;
             }
 
@@ -1200,7 +1211,11 @@ PS1;
                 continue;
             }
 
-            $row['image_url'] = $catalogIndex[$name] ?? null;
+            $catalogMeta = $catalogIndex[$name] ?? null;
+            if (is_array($catalogMeta)) {
+                $row['id'] ??= $catalogMeta['id'] ?? null;
+                $row['image_url'] ??= $catalogMeta['image_url'] ?? null;
+            }
         }
         unset($row);
 
@@ -1897,6 +1912,7 @@ PS1;
     private function mapReportCard(array $item): array
     {
         return [
+            'id' => $item['id'],
             'name' => $item['name'],
             'weapon' => $item['weapon'],
             'price' => $item['current_price'],
@@ -1906,34 +1922,46 @@ PS1;
             'score' => $item['interest_score'],
             'reason' => $this->buildShortReason($item),
             'image_url' => $item['image_url'],
+            'item_page' => $item['item_page'] ?? null,
+            'market_page' => $item['market_page'] ?? null,
         ];
     }
 
     private function mapCompactRow(array $item): array
     {
         return [
+            'id' => $item['id'],
             'name' => $item['name'],
             'change_24h' => $item['change_vs_yesterday_pct'],
             'price' => $item['current_price'],
             'image_url' => $item['image_url'] ?? null,
+            'item_page' => $item['item_page'] ?? null,
+            'market_page' => $item['market_page'] ?? null,
         ];
     }
 
     private function mapVolumeRow(array $item): array
     {
         return [
+            'id' => $item['id'],
             'name' => $item['name'],
             'volume_ratio' => $item['volume_ratio_24h_7d'],
             'volume_24h' => $item['sales_24h_volume'],
             'image_url' => $item['image_url'] ?? null,
+            'item_page' => $item['item_page'] ?? null,
+            'market_page' => $item['market_page'] ?? null,
         ];
     }
 
     private function mapWatchlistRow(array $item): array
     {
         return [
+            'id' => $item['id'],
             'name' => $item['name'],
             'status' => $this->buildShortReason($item),
+            'image_url' => $item['image_url'] ?? null,
+            'item_page' => $item['item_page'] ?? null,
+            'market_page' => $item['market_page'] ?? null,
         ];
     }
 

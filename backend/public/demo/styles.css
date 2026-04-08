@@ -262,6 +262,34 @@ button { border: 0; }
   gap: 6px;
 }
 
+.item-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.item-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(182, 77, 47, 0.18);
+  background: rgba(182, 77, 47, 0.08);
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.item-link:hover {
+  background: rgba(182, 77, 47, 0.14);
+}
+
+.item-link-button {
+  cursor: pointer;
+  font: inherit;
+}
+
 .skin-thumb {
   display: grid;
   place-items: center;
