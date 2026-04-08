@@ -235,7 +235,11 @@ button { border: 0; }
 
 .signal-list,
 .table-list,
-.log-list { display: grid; gap: 12px; }
+.log-list {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
 
 .signal-item,
 .table-item,
@@ -297,6 +301,36 @@ button { border: 0; }
 
 .item-link:hover {
   background: rgba(182, 77, 47, 0.14);
+}
+
+.item-name-link {
+  display: inline;
+  width: fit-content;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.item-name-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.item-name-link.is-static {
+  cursor: default;
+}
+
+.item-name-link.is-static:hover {
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .item-link-button {
@@ -419,18 +453,19 @@ button { border: 0; }
 
 .ai-grid {
   display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-  margin-top: 8px;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  margin-top: 6px;
 }
 
 .ai-section {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 10px;
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.4);
   border: 1px solid rgba(53, 36, 25, 0.06);
+  align-content: start;
 }
 
 .ai-section h5 {
@@ -451,7 +486,7 @@ button { border: 0; }
 }
 
 .ai-card {
-  padding: 16px 18px;
+  padding: 12px 14px;
 }
 
 .ai-badge-row {
@@ -481,12 +516,33 @@ button { border: 0; }
 }
 
 .ai-section .value-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   text-align: left;
-  gap: 2px;
 }
 
 .ai-section .value-stack strong {
-  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(182, 77, 47, 0.14);
+  color: var(--accent);
+  font-size: 0.78rem;
+  line-height: 1.1;
+}
+
+.ai-section .value-stack .table-meta {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(182, 77, 47, 0.08);
+  border: 1px solid rgba(182, 77, 47, 0.14);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.1;
 }
 
 .item-layout { display: grid; gap: 18px; }

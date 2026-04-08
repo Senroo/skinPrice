@@ -81,6 +81,51 @@ const itemActions = (item) => {
   return `<div class="item-link-row">${actions.join("")}</div>`;
 };
 
+const knownItems = () => [
+  ...(state.overview?.top_signals ?? []),
+  ...(state.reportToday?.top_opportunities ?? []),
+  ...(state.reportToday?.top_gainers ?? []),
+  ...(state.reportToday?.top_losers ?? []),
+  ...(state.reportToday?.top_volume ?? []),
+  ...(state.watchlist?.data ?? []),
+  ...(state.item ? [state.item] : []),
+];
+
+const resolveItemByName = (input) => {
+  const targetName =
+    typeof input === "string"
+      ? input
+      : (input?.name ?? input?.market_hash_name ?? "");
+  if (!targetName) {
+    return null;
+  }
+
+  return knownItems().find((item) => (item?.name ?? item?.market_hash_name ?? "") === targetName) ?? null;
+};
+
+const itemNameMarkup = (input, options = {}) => {
+  const resolved =
+    typeof input === "string"
+      ? resolveItemByName(input)
+      : (input ?? resolveItemByName(input));
+  const label = escapeHtml(
+    typeof input === "string"
+      ? input
+      : (input?.name ?? input?.market_hash_name ?? options.fallbackLabel ?? "")
+  );
+
+  if (resolved?.id) {
+    return `<button class="item-name-link" type="button" data-open-item="${escapeHtml(resolved.id)}">${label}</button>`;
+  }
+
+  const url = itemPrimaryLink(resolved ?? input);
+  if (url) {
+    return `<a class="item-name-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`;
+  }
+
+  return `<span class="item-name-link is-static">${label}</span>`;
+};
+
 const aiSection = (title, cards, emptyText) => `
   <div class="ai-section">
     <h5>${escapeHtml(title)}</h5>
@@ -92,7 +137,7 @@ const aiSection = (title, cards, emptyText) => `
                 (card) => `
                 <article class="table-item ai-card">
                   <div class="table-item-main">
-                    <strong>${escapeHtml(card.name)}</strong>
+                    ${itemNameMarkup(card.name)}
                     <span class="table-meta">${escapeHtml(card.rationale)}</span>
                     <div class="ai-badge-row">
                       <span class="ai-badge ai-badge-primary">${escapeHtml(card.verdict || "A surveiller")}</span>
@@ -130,7 +175,7 @@ const aiWatchlistSection = (title, actions, emptyText) => `
                 (action) => `
                 <article class="table-item ai-card">
                   <div class="table-item-main">
-                    <strong>${escapeHtml(action.name)}</strong>
+                    ${itemNameMarkup(action.name)}
                     <span class="table-meta">${escapeHtml(action.rationale || action.note || "")}</span>
                     <div class="ai-badge-row">
                       <span class="ai-badge ai-badge-primary">${escapeHtml((action.action || "keep").toUpperCase())}</span>
@@ -169,7 +214,7 @@ const renderAiCardList = (title, cards, emptyText, options = {}) => `
                 (card) => `
                 <article class="table-item ai-card">
                   <div class="table-item-main">
-                    <strong>${escapeHtml(card.name)}</strong>
+                    ${itemNameMarkup(card.name)}
                     <span class="table-meta">${escapeHtml(card.rationale || "")}</span>
                     <div class="ai-badge-row">
                       <span class="ai-badge ai-badge-primary">${escapeHtml(card.verdict || options.primaryFallback || "A surveiller")}</span>
@@ -204,7 +249,7 @@ const renderAiWatchlistList = (title, actions, emptyText) => `
                 (action) => `
                 <article class="table-item ai-card">
                   <div class="table-item-main">
-                    <strong>${escapeHtml(action.name)}</strong>
+                    ${itemNameMarkup(action.name)}
                     <span class="table-meta">${escapeHtml(action.rationale || action.note || "")}</span>
                     <div class="ai-badge-row">
                       <span class="ai-badge ai-badge-primary">${escapeHtml((action.action || "keep").toUpperCase())}</span>
@@ -298,7 +343,7 @@ const renderSignals = () => {
     <article class="signal-item">
       ${itemVisual(item)}
       <div class="signal-item-meta">
-        <strong>${item.name}</strong>
+        ${itemNameMarkup(item)}
         <div class="item-link-row">${itemLink(item, "Voir le marché")}</div>
         <span class="table-meta">${euro(item.current_price)} • ${pct(item.change_24h)}</span>
         <div class="badge-row">${(item.tags ?? []).map((tag) => `<span class="badge">${tag}</span>`).join("")}</div>
@@ -334,7 +379,7 @@ const renderOpportunities = () => {
       <div class="opportunity-top">
         ${itemVisual(item)}
         <div class="opportunity-copy">
-          <h5>${item.name}</h5>
+          <h5>${itemNameMarkup(item)}</h5>
           <div class="metric-row">
             <span>${euro(item.price)}</span>
             <span>${pct(item.change_24h)} 24h</span>
@@ -444,7 +489,7 @@ const renderReportSummary = () => {
               (card) => `
               <article class="table-item ai-card">
                 <div class="table-item-main">
-                  <strong>${escapeHtml(card.name)}</strong>
+                  ${itemNameMarkup(card.name)}
                   <span class="table-meta">${escapeHtml(card.rationale)}</span>
                   <div class="ai-badge-row">
                     <span class="ai-badge ai-badge-primary">${escapeHtml(card.verdict || "A surveiller")}</span>
@@ -552,7 +597,7 @@ const renderReportSummary = () => {
 const renderWatchlist = () => {
   renderSimpleTable("watchlist-table", state.watchlist?.data ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">${item.note}</span><div class="item-link-row">${itemLink(item, "Ouvrir l'item")}</div></div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy">${itemNameMarkup(item)}<span class="table-meta">${item.note}</span><div class="item-link-row">${itemLink(item, "Ouvrir l'item")}</div></div></div>
       <div class="value-stack"><strong>${euro(item.price)}</strong><span class="table-meta">watchlist</span></div>
     </article>
   `);
@@ -561,21 +606,21 @@ const renderWatchlist = () => {
 const renderGainersLosersVolume = () => {
   renderSimpleTable("gainers-list", state.reportToday?.top_gainers ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">hausse 24h</span><div class="item-link-row">${itemLink(item, "Ouvrir l'item")}</div></div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy">${itemNameMarkup(item)}<span class="table-meta">hausse 24h</span><div class="item-link-row">${itemLink(item, "Ouvrir l'item")}</div></div></div>
       <div class="value-stack"><strong class="positive">${pct(item.change_24h)}</strong><span class="table-meta">${euro(item.price)}</span></div>
     </article>
   `);
 
   renderSimpleTable("losers-list", state.reportToday?.top_losers ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">baisse 24h</span><div class="item-link-row">${itemLink(item, "Ouvrir l'item")}</div></div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy">${itemNameMarkup(item)}<span class="table-meta">baisse 24h</span><div class="item-link-row">${itemLink(item, "Ouvrir l'item")}</div></div></div>
       <div class="value-stack"><strong class="negative">${pct(item.change_24h)}</strong><span class="table-meta">${euro(item.price)}</span></div>
     </article>
   `);
 
   renderSimpleTable("volume-list", state.reportToday?.top_volume ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">accélération de liquidité</span></div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy">${itemNameMarkup(item)}<span class="table-meta">accélération de liquidité</span></div></div>
       <div class="value-stack"><strong>x${(item.volume_ratio ?? 0).toFixed(1).replace(".", ",")}</strong><span class="table-meta">${item.volume_24h ?? 0} ventes</span></div>
     </article>
   `);
@@ -771,7 +816,7 @@ const renderSignalsLinked = () => {
     <article class="signal-item">
       ${itemVisual(item)}
       <div class="signal-item-meta">
-        <strong>${item.name}</strong>
+${itemNameMarkup(item)}
         ${itemActions(item)}
         <span class="table-meta">${euro(item.current_price)} - ${pct(item.change_24h)}</span>
         <div class="badge-row">${(item.tags ?? []).map((tag) => `<span class="badge">${tag}</span>`).join("")}</div>
@@ -791,7 +836,7 @@ const renderOpportunitiesLinked = () => {
       <div class="opportunity-top">
         ${itemVisual(item)}
         <div class="opportunity-copy">
-          <h5>${item.name}</h5>
+          <h5>${itemNameMarkup(item)}</h5>
           <div class="metric-row">
             <span>${euro(item.price)}</span>
             <span>${pct(item.change_24h)} 24h</span>
@@ -812,7 +857,7 @@ const renderOpportunitiesLinked = () => {
 const renderWatchlistLinked = () => {
   renderSimpleTable("watchlist-table", state.watchlist?.data ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">${item.note}</span><span class="table-meta">gestion ${escapeHtml(item.managed_by || "system")}${item.last_ai_action ? ` • IA ${escapeHtml(item.last_ai_action)}` : ""}</span>${item.last_ai_reason ? `<span class="table-meta">${escapeHtml(item.last_ai_reason)}</span>` : ""}${itemActions(item)}</div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy">${itemNameMarkup(item)}<span class="table-meta">${item.note}</span><span class="table-meta">gestion ${escapeHtml(item.managed_by || "system")}${item.last_ai_action ? ` • IA ${escapeHtml(item.last_ai_action)}` : ""}</span>${item.last_ai_reason ? `<span class="table-meta">${escapeHtml(item.last_ai_reason)}</span>` : ""}${itemActions(item)}</div></div>
       <div class="value-stack"><strong>${euro(item.price)}</strong><span class="table-meta">watchlist</span></div>
     </article>
   `);
@@ -821,21 +866,21 @@ const renderWatchlistLinked = () => {
 const renderGainersLosersVolumeLinked = () => {
   renderSimpleTable("gainers-list", state.reportToday?.top_gainers ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">hausse 24h</span>${itemActions(item)}</div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy">${itemNameMarkup(item)}<span class="table-meta">hausse 24h</span>${itemActions(item)}</div></div>
       <div class="value-stack"><strong class="positive">${pct(item.change_24h)}</strong><span class="table-meta">${euro(item.price)}</span></div>
     </article>
   `);
 
   renderSimpleTable("losers-list", state.reportToday?.top_losers ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">baisse 24h</span>${itemActions(item)}</div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy">${itemNameMarkup(item)}<span class="table-meta">baisse 24h</span>${itemActions(item)}</div></div>
       <div class="value-stack"><strong class="negative">${pct(item.change_24h)}</strong><span class="table-meta">${euro(item.price)}</span></div>
     </article>
   `);
 
   renderSimpleTable("volume-list", state.reportToday?.top_volume ?? [], (item) => `
     <article class="table-item">
-      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy"><strong>${item.name}</strong><span class="table-meta">acceleration de liquidite</span>${itemActions(item)}</div></div>
+      <div class="table-item-main table-item-with-image">${itemVisual(item, { label: item.name })}<div class="table-item-copy">${itemNameMarkup(item)}<span class="table-meta">acceleration de liquidite</span>${itemActions(item)}</div></div>
       <div class="value-stack"><strong>x${(item.volume_ratio ?? 0).toFixed(1).replace(".", ",")}</strong><span class="table-meta">${item.volume_24h ?? 0} ventes</span></div>
     </article>
   `);
