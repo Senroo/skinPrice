@@ -26,6 +26,14 @@ const pct = (value) => {
   return `${value > 0 ? "+" : ""}${value.toFixed(1).replace(".", ",")} %`;
 };
 
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
 const fetchJson = async (path, options = {}) => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -155,9 +163,38 @@ const renderReportSummary = () => {
     return;
   }
 
-  const summaryPanel = document.querySelector(".summary-copy p + h4 + p");
-  if (summaryPanel) {
-    summaryPanel.textContent = report.summary_text ?? "";
+  const eyebrow = document.querySelector(".summary-copy .eyebrow");
+  if (eyebrow) {
+    eyebrow.textContent = report.ai_best_deals_text ? "Analyse IA OpenRouter" : "Résumé du rapport";
+  }
+
+  const title = document.querySelector(".summary-copy h4");
+  if (title) {
+    title.textContent = report.ai_best_deals_title ?? "Résumé du marché du jour";
+  }
+
+  const body = document.querySelector(".summary-copy h4 + p");
+  if (body) {
+    body.textContent = report.ai_best_deals_text ?? report.summary_text ?? "";
+  }
+
+  const summaryCopy = document.querySelector(".summary-copy");
+  let modelNode = document.getElementById("summary-model");
+  if (!modelNode && summaryCopy) {
+    modelNode = document.createElement("p");
+    modelNode.id = "summary-model";
+    modelNode.className = "table-meta";
+    summaryCopy.appendChild(modelNode);
+  }
+
+  if (modelNode) {
+    if (report.ai_model) {
+      modelNode.textContent = `Analyse générée via ${report.ai_model}${report.ai_generated_at ? ` le ${report.ai_generated_at.slice(0, 16).replace("T", " ")}` : ""}.`;
+    } else if (report.ai_best_deals_error) {
+      modelNode.textContent = `Analyse IA indisponible: ${report.ai_best_deals_error}`;
+    } else {
+      modelNode.textContent = "Analyse locale uniquement. Ajoute OPENROUTER_API_KEY pour enrichir ce bloc avec la recherche web.";
+    }
   }
 
   const stats = document.querySelectorAll(".summary-stats strong");
@@ -165,6 +202,78 @@ const renderReportSummary = () => {
     stats[0].textContent = report.items_scanned ?? "-";
     stats[1].textContent = report.items_in_range ?? "-";
     stats[2].textContent = report.opportunities_count ?? "-";
+  }
+
+  let panel = document.getElementById("ai-insights-panel");
+  if (!panel) {
+    const summary = document.querySelector(".summary-panel");
+    if (summary) {
+      panel = document.createElement("article");
+      panel.id = "ai-insights-panel";
+      panel.className = "panel";
+      panel.innerHTML = `
+        <div class="card-header">
+          <div>
+            <h4>Lecture IA des meilleures affaires</h4>
+            <p>Ce bloc croise le JSON du jour avec la recherche web OpenRouter.</p>
+          </div>
+        </div>
+        <div class="table-list" id="ai-best-deals"></div>
+        <div class="table-list" id="ai-sources"></div>
+      `;
+      summary.insertAdjacentElement("afterend", panel);
+    }
+  }
+
+  const cardsRoot = document.getElementById("ai-best-deals");
+  if (cardsRoot) {
+    const cards = report.ai_best_deals_cards ?? [];
+    cardsRoot.innerHTML =
+      cards.length > 0
+        ? cards
+            .map(
+              (card) => `
+              <article class="table-item">
+                <div class="table-item-main">
+                  <strong>${escapeHtml(card.name)}</strong>
+                  <span class="table-meta">${escapeHtml(card.rationale)}</span>
+                </div>
+                <div class="value-stack">
+                  <strong>${escapeHtml(card.verdict || "À surveiller")}</strong>
+                  <span class="table-meta">meilleure affaire</span>
+                </div>
+              </article>
+            `
+            )
+            .join("")
+        : `
+          <article class="table-item">
+            <div class="table-item-main">
+              <strong>Aucune carte IA détaillée pour l'instant</strong>
+              <span class="table-meta">Le rapport reste disponible, mais l'analyse web n'a pas encore produit de shortlist exploitable.</span>
+            </div>
+          </article>
+        `;
+  }
+
+  const sourcesRoot = document.getElementById("ai-sources");
+  if (sourcesRoot) {
+    const sources = report.ai_best_deals_sources ?? [];
+    sourcesRoot.innerHTML =
+      sources.length > 0
+        ? sources
+            .map(
+              (source) => `
+              <article class="table-item">
+                <div class="table-item-main">
+                  <strong>Source web</strong>
+                  <span class="table-meta"><a href="${escapeHtml(source)}" target="_blank" rel="noreferrer">${escapeHtml(source)}</a></span>
+                </div>
+              </article>
+            `
+            )
+            .join("")
+        : "";
   }
 };
 
@@ -269,7 +378,7 @@ const renderHealth = () => {
   renderSimpleTable("api-health", health.sources ?? [], (source) => `
     <article class="table-item">
       <div class="table-item-main"><strong>${source.name}</strong><span class="table-meta">${source.note}</span></div>
-      <div class="value-stack"><strong class="${source.status === "ok" ? "positive" : (source.status === "ready" || source.status === "public" ? "neutral" : "negative")}">${source.status}</strong><span class="table-meta">source</span></div>
+      <div class="value-stack"><strong class="${source.status === "ok" ? "positive" : (source.status === "ready" || source.status === "public" || source.status === "unknown" ? "neutral" : "negative")}">${source.status}</strong><span class="table-meta">source</span></div>
     </article>
   `);
 };

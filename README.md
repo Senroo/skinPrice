@@ -129,6 +129,8 @@ Puis ouvrir `http://127.0.0.1:8080/demo/`.
 Copier `.env.example` si tu veux preparer un environnement de deploy :
 
 - `CSFLOAT_API_KEY` : recommande, evite les refus HTTP 403 sur l'enrichissement listings CSFloat
+- `OPENROUTER_API_KEY` : active l'analyse IA du rapport avec recherche web OpenRouter
+- `OPENROUTER_MODEL` : modele OpenRouter a utiliser, par defaut `google/gemma-4-26b-a4b-it`
 - `SKINPORT_BROWSER_PATH` : optionnel, chemin d'un navigateur Chromium si le runtime n'arrive pas a decoder Brotli via curl
 - `PORT` : utile pour Railway
 

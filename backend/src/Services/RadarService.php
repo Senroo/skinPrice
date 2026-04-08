@@ -175,13 +175,13 @@ final class RadarService
     {
         $report = $this->getLatestReport();
         if ($report !== []) {
-            return $report;
+            return $this->normalizeReport($report);
         }
 
         $market = $this->readMarketData();
         $items = $market['items'] ?? [];
 
-        return [
+        return $this->normalizeReport([
             'date' => $market['date'] ?? date('Y-m-d'),
             'items_scanned' => count($this->readJson($this->catalogFile, ['items' => []])['items'] ?? []),
             'items_in_range' => count($items),
@@ -194,7 +194,7 @@ final class RadarService
             'top_losers' => [],
             'top_volume' => [],
             'watchlist_moves' => array_map([$this, 'mapWatchlistRow'], array_slice($this->watchlistMoves($items), 0, 5)),
-        ];
+        ]);
     }
 
     public function reportHistory(): array
@@ -244,6 +244,7 @@ final class RadarService
         $csfloatSignals = $csfloat['signals'] ?? [];
         $csfloatConfigured = $this->csfloatIsConfigured();
         $csfloatSyncedAt = is_array($csfloat) ? ($csfloat['synced_at'] ?? null) : null;
+        $openRouterConfigured = $this->openRouterIsConfigured();
 
         return [
             'status' => $this->deriveGlobalHealth($latestJobs),
@@ -261,6 +262,13 @@ final class RadarService
                     'note' => $csfloatSyncedAt !== null
                         ? sprintf('signaux listings sync a %s (%d entrees)', $csfloatSyncedAt, count($csfloatSignals))
                         : ($csfloatConfigured ? 'pret pour enrichissement via API key' : 'mode public sans API key, certains endpoints peuvent refuser 403'),
+                ],
+                [
+                    'name' => 'OpenRouter',
+                    'status' => $openRouterConfigured ? 'ready' : 'unknown',
+                    'note' => $openRouterConfigured
+                        ? sprintf('analyse IA active via %s avec web search', $this->openRouterModel())
+                        : 'OPENROUTER_API_KEY absente, rapport texte local uniquement',
                 ],
             ],
             'jobs' => [
@@ -497,6 +505,22 @@ final class RadarService
             'top_volume' => array_map([$this, 'mapVolumeRow'], array_slice($volumes, 0, 5)),
             'watchlist_moves' => array_map([$this, 'mapWatchlistRow'], array_slice($watchlistMoves, 0, 5)),
         ];
+        $report = $this->normalizeReport($report);
+
+        try {
+            $aiAnalysis = $this->generateAiBestDeals($report);
+            if ($aiAnalysis !== null) {
+                $report['ai_best_deals_title'] = $aiAnalysis['title'];
+                $report['ai_best_deals_text'] = $aiAnalysis['text'];
+                $report['ai_best_deals_cards'] = $aiAnalysis['cards'];
+                $report['ai_best_deals_sources'] = $aiAnalysis['sources'];
+                $report['ai_model'] = $aiAnalysis['model'];
+                $report['ai_generated_at'] = $aiAnalysis['generated_at'];
+                $report['ai_best_deals_error'] = null;
+            }
+        } catch (\Throwable $exception) {
+            $report['ai_best_deals_error'] = $exception->getMessage();
+        }
 
         $reports = array_values(array_filter(
             $this->readJson($this->reportsFile, []),
@@ -670,6 +694,51 @@ final class RadarService
             }
 
             throw new RuntimeException(sprintf('Unexpected HTTP status %d for %s', $statusCode, $url));
+        }
+
+        $decoded = json_decode($response, true);
+        if (!is_array($decoded)) {
+            throw new RuntimeException('Unable to decode JSON payload from ' . $url);
+        }
+
+        return $decoded;
+    }
+
+    private function postJsonWithCurl(string $url, array $payload, array $headers = [], int $timeout = 60): array
+    {
+        $handle = curl_init($url);
+        $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($body === false) {
+            throw new RuntimeException('Unable to encode JSON payload for ' . $url);
+        }
+
+        curl_setopt_array($handle, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $body,
+            CURLOPT_HTTPHEADER => array_merge([
+                'User-Agent: CS2 Market Daily Radar',
+                'Accept: application/json',
+                'Content-Type: application/json',
+            ], $headers),
+        ]);
+
+        $response = curl_exec($handle);
+        if ($response === false) {
+            throw new RuntimeException('Curl request failed: ' . curl_error($handle));
+        }
+
+        $statusCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        if ($statusCode >= 400) {
+            $snippet = trim(substr(preg_replace('/\s+/', ' ', (string) $response) ?? '', 0, 220));
+            throw new RuntimeException(sprintf(
+                'Unexpected HTTP status %d for %s%s',
+                $statusCode,
+                $url,
+                $snippet !== '' ? ' - ' . $snippet : ''
+            ));
         }
 
         $decoded = json_decode($response, true);
@@ -985,6 +1054,189 @@ PS1;
     {
         $reports = $this->readJson($this->reportsFile, []);
         return $reports[0] ?? [];
+    }
+
+    private function normalizeReport(array $report): array
+    {
+        $report['ai_best_deals_title'] ??= null;
+        $report['ai_best_deals_text'] ??= null;
+        $report['ai_best_deals_cards'] ??= [];
+        $report['ai_best_deals_sources'] ??= [];
+        $report['ai_model'] ??= null;
+        $report['ai_generated_at'] ??= null;
+        $report['ai_best_deals_error'] ??= null;
+
+        return $report;
+    }
+
+    private function generateAiBestDeals(array $report): ?array
+    {
+        if (!$this->openRouterIsConfigured()) {
+            return null;
+        }
+
+        $payload = [
+            'model' => $this->openRouterModel(),
+            'temperature' => 0.2,
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'Tu es un analyste marche CS2 prudent. Tu recois le JSON du rapport du jour, tu peux utiliser la recherche web OpenRouter pour verifier le contexte public recent, puis tu rediges une synthese concise en francais. N invente aucune donnee. Reponds en JSON strict avec les cles title, text, best_deals, source_urls. Chaque best_deals doit contenir name, verdict et rationale.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => json_encode([
+                        'task' => 'Trouve les meilleures affaires du jour a partir du rapport CS2 ci-dessous. Utilise la recherche web seulement pour confirmer le contexte public recent ou signaler un risque de liquidite. Si tu n as pas assez d elements, dis-le clairement.',
+                        'report' => $report,
+                    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                ],
+            ],
+            'tools' => [
+                [
+                    'type' => 'openrouter:web_search',
+                    'parameters' => [
+                        'max_results' => 5,
+                        'max_total_results' => 10,
+                        'search_context_size' => 'medium',
+                    ],
+                ],
+            ],
+        ];
+
+        $response = $this->postJsonWithCurl(
+            'https://openrouter.ai/api/v1/chat/completions',
+            $payload,
+            [
+                'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
+                'HTTP-Referer: https://cs2-market-daily-radar.local',
+                'X-Title: CS2 Market Daily Radar',
+            ],
+            90
+        );
+
+        $content = $this->extractAssistantContent($response);
+        $decoded = $this->decodeJsonObject($content);
+        if ($decoded === null) {
+            return [
+                'title' => 'Meilleures affaires du jour',
+                'text' => trim($content),
+                'cards' => [],
+                'sources' => $this->extractLinksFromText($content),
+                'model' => (string) ($response['model'] ?? $this->openRouterModel()),
+                'generated_at' => date(DATE_ATOM),
+            ];
+        }
+
+        return [
+            'title' => (string) ($decoded['title'] ?? 'Meilleures affaires du jour'),
+            'text' => trim((string) ($decoded['text'] ?? '')),
+            'cards' => $this->normalizeAiCards($decoded['best_deals'] ?? []),
+            'sources' => (($sources = $this->normalizeAiSources($decoded['source_urls'] ?? [])) !== [] ? $sources : $this->extractLinksFromText($content)),
+            'model' => (string) ($response['model'] ?? $this->openRouterModel()),
+            'generated_at' => date(DATE_ATOM),
+        ];
+    }
+
+    private function extractAssistantContent(array $response): string
+    {
+        $message = $response['choices'][0]['message']['content'] ?? '';
+        if (is_string($message)) {
+            return $message;
+        }
+
+        if (is_array($message)) {
+            $parts = [];
+            foreach ($message as $chunk) {
+                if (is_string($chunk)) {
+                    $parts[] = $chunk;
+                    continue;
+                }
+
+                if (is_array($chunk) && isset($chunk['text']) && is_string($chunk['text'])) {
+                    $parts[] = $chunk['text'];
+                }
+            }
+
+            return trim(implode("\n", $parts));
+        }
+
+        return '';
+    }
+
+    private function decodeJsonObject(string $content): ?array
+    {
+        $trimmed = trim($content);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        if (preg_match('/```(?:json)?\s*(\{.*\})\s*```/si', $trimmed, $matches) === 1) {
+            $trimmed = trim($matches[1]);
+        }
+
+        $decoded = json_decode($trimmed, true);
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    private function normalizeAiCards(mixed $cards): array
+    {
+        if (!is_array($cards)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($cards as $card) {
+            if (!is_array($card)) {
+                continue;
+            }
+
+            $name = trim((string) ($card['name'] ?? ''));
+            $verdict = trim((string) ($card['verdict'] ?? ''));
+            $rationale = trim((string) ($card['rationale'] ?? ''));
+            if ($name === '' && $verdict === '' && $rationale === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'name' => $name,
+                'verdict' => $verdict,
+                'rationale' => $rationale,
+            ];
+        }
+
+        return array_slice($normalized, 0, 5);
+    }
+
+    private function normalizeAiSources(mixed $sources): array
+    {
+        if (!is_array($sources)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($sources as $source) {
+            if (!is_string($source)) {
+                continue;
+            }
+
+            $url = trim($source);
+            if ($url === '' || !filter_var($url, FILTER_VALIDATE_URL)) {
+                continue;
+            }
+
+            $normalized[] = $url;
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
+    private function extractLinksFromText(string $text): array
+    {
+        if (preg_match_all('/https?:\/\/[^\s)<>"\'`]+/i', $text, $matches) === false) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter($matches[0], static fn (string $url): bool => (bool) filter_var($url, FILTER_VALIDATE_URL))));
     }
 
     private function getRecentListingSignals(string $marketHashName): array
@@ -1373,6 +1625,16 @@ PS1;
     private function csfloatIsConfigured(): bool
     {
         return $this->env('CSFLOAT_API_KEY') !== null;
+    }
+
+    private function openRouterIsConfigured(): bool
+    {
+        return $this->env('OPENROUTER_API_KEY') !== null;
+    }
+
+    private function openRouterModel(): string
+    {
+        return $this->env('OPENROUTER_MODEL') ?? 'google/gemma-4-26b-a4b-it';
     }
 
     private function isRateLimitError(string $message): bool
