@@ -280,6 +280,7 @@ final class RadarService
         $csfloatConfigured = $this->csfloatIsConfigured();
         $csfloatSyncedAt = is_array($csfloat) ? ($csfloat['synced_at'] ?? null) : null;
         $openRouterConfigured = $this->openRouterIsConfigured();
+        $discordConfigured = $this->discordWebhookIsConfigured();
 
         return [
             'status' => $this->deriveGlobalHealth($latestJobs),
@@ -308,12 +309,20 @@ final class RadarService
                         ? sprintf('analyse IA active via %s avec web search', $this->openRouterModel())
                         : 'OPENROUTER_API_KEY absente, rapport texte local uniquement',
                 ],
+                [
+                    'name' => 'Discord',
+                    'status' => $discordConfigured ? 'ready' : 'unknown',
+                    'note' => $discordConfigured
+                        ? 'webhook configure pour envoi du rapport du jour'
+                        : 'DISCORD_WEBHOOK_URL absente, export Discord desactive',
+                ],
             ],
             'jobs' => [
                 'sync-catalog' => $latestJobs['sync-catalog'] ?? 'pending',
                 'sync-market' => $latestJobs['sync-market'] ?? 'pending',
                 'generate-report' => $latestJobs['generate-report'] ?? 'pending',
                 'sync-csfloat' => $latestJobs['sync-csfloat'] ?? 'pending',
+                'send-discord-report' => $latestJobs['send-discord-report'] ?? 'pending',
             ],
         ];
     }
@@ -339,6 +348,7 @@ final class RadarService
             'sync-market' => $this->runJob($jobName, fn (): array => $this->performMarketSync()),
             'sync-csfloat' => $this->runJob($jobName, fn (): array => $this->performCsfloatSync()),
             'generate-report' => $this->runJob($jobName, fn (): array => $this->performReportGeneration()),
+            'send-discord-report' => $this->runJob($jobName, fn (): array => $this->performDiscordReport()),
             default => throw new RuntimeException('Unknown job.'),
         };
     }
@@ -651,6 +661,63 @@ final class RadarService
             'items_processed' => count($signals),
             'targets' => $processedTargets,
             'rate_limited' => $rateLimited,
+        ];
+    }
+
+    private function performDiscordReport(): array
+    {
+        if (!$this->discordWebhookIsConfigured()) {
+            throw new RuntimeException('DISCORD_WEBHOOK_URL absente. Configure le webhook Discord avant l envoi.');
+        }
+
+        $report = $this->reportToday();
+        $overview = $this->overview();
+        $watchlist = $this->watchlist()['data'] ?? [];
+        $marketIndex = [];
+        foreach (($this->readMarketData()['items'] ?? []) as $item) {
+            $marketIndex[$item['market_hash_name']] = $item;
+            $marketIndex[$item['name'] ?? $item['market_hash_name']] = $item;
+        }
+
+        $embeds = [$this->buildDiscordSummaryEmbed($report, $overview, $watchlist)];
+
+        foreach (array_slice($report['top_opportunities'] ?? [], 0, 4) as $card) {
+            $marketItem = $marketIndex[(string) ($card['name'] ?? '')] ?? null;
+            $embeds[] = $this->buildDiscordItemEmbed(
+                is_array($marketItem) ? array_merge($marketItem, $card) : $card,
+                'Top opportunité',
+                $card['reason'] ?? 'Signal du jour',
+                0xB54B2E
+            );
+        }
+
+        foreach (array_slice($watchlist, 0, 4) as $watchItem) {
+            $marketItem = $marketIndex[(string) ($watchItem['name'] ?? '')] ?? null;
+            $embeds[] = $this->buildDiscordItemEmbed(
+                is_array($marketItem) ? array_merge($marketItem, $watchItem) : $watchItem,
+                'Watchlist',
+                $watchItem['last_ai_reason'] ?? $watchItem['note'] ?? 'Item suivi de près',
+                0xD28C49
+            );
+        }
+
+        $payload = [
+            'username' => 'CS2 Daily Radar',
+            'avatar_url' => 'https://raw.githubusercontent.com/ByMykel/CSGO-API/main/public/icons/logo.png',
+            'content' => sprintf('Radar CS2 du %s', (string) ($report['date'] ?? date('Y-m-d'))),
+            'allowed_mentions' => ['parse' => []],
+            'embeds' => array_slice($embeds, 0, 10),
+        ];
+
+        $webhookUrl = $this->discordWebhookUrl();
+        $separator = str_contains($webhookUrl, '?') ? '&' : '?';
+        $response = $this->postJsonWithCurl($webhookUrl . $separator . 'wait=true', $payload, [], 60);
+
+        return [
+            'sent_at' => date(DATE_ATOM),
+            'embeds_sent' => count($payload['embeds']),
+            'discord_message_id' => $response['id'] ?? null,
+            'report_date' => $report['date'] ?? date('Y-m-d'),
         ];
     }
 
@@ -2074,6 +2141,188 @@ PS1;
     private function openRouterModel(): string
     {
         return $this->env('OPENROUTER_MODEL') ?? 'google/gemma-4-26b-a4b-it';
+    }
+
+    private function discordWebhookIsConfigured(): bool
+    {
+        return $this->env('DISCORD_WEBHOOK_URL') !== null;
+    }
+
+    private function discordWebhookUrl(): string
+    {
+        $url = $this->env('DISCORD_WEBHOOK_URL');
+        if ($url === null) {
+            throw new RuntimeException('DISCORD_WEBHOOK_URL absente.');
+        }
+
+        return $url;
+    }
+
+    private function buildDiscordSummaryEmbed(array $report, array $overview, array $watchlist): array
+    {
+        $topGainers = array_slice($report['top_gainers'] ?? [], 0, 3);
+        $topLosers = array_slice($report['top_losers'] ?? [], 0, 3);
+        $watchlistMoves = array_slice($report['watchlist_moves'] ?? [], 0, 4);
+
+        return [
+            'title' => sprintf('CS2 Market Daily Radar • %s', (string) ($report['date'] ?? date('Y-m-d'))),
+            'description' => $this->truncateForDiscord((string) ($report['ai_best_deals_text'] ?? $report['summary_text'] ?? 'Rapport du jour genere.')),
+            'color' => 0xB54B2E,
+            'fields' => [
+                $this->discordField('Items suivis', (string) ($overview['items_tracked'] ?? 0), true),
+                $this->discordField('Dans la tranche', (string) ($report['items_in_range'] ?? 0), true),
+                $this->discordField('Opportunités', (string) ($report['opportunities_count'] ?? 0), true),
+                $this->discordField('Watchlist active', (string) count($watchlist), true),
+                $this->discordField('Courbe 7j', $this->discordSparkline($overview['opportunity_series'] ?? []), false),
+                $this->discordField('Top hausses', $this->discordLeaderboard($topGainers, 'change_24h'), false),
+                $this->discordField('Top baisses', $this->discordLeaderboard($topLosers, 'change_24h'), false),
+                $this->discordField('Watchlist en mouvement', $this->discordWatchlistSummary($watchlistMoves), false),
+            ],
+            'footer' => [
+                'text' => 'ByMykel • Skinport • CSFloat • OpenRouter',
+            ],
+            'timestamp' => date(DATE_ATOM),
+        ];
+    }
+
+    private function buildDiscordItemEmbed(array $item, string $section, string $subtitle, int $color): array
+    {
+        $name = (string) ($item['name'] ?? $item['market_hash_name'] ?? 'CS2 item');
+        $reason = trim($subtitle) !== '' ? trim($subtitle) : ($item['reason'] ?? 'Signal du jour');
+        $fields = [
+            $this->discordField('Prix', $this->formatDiscordPrice($item['price'] ?? $item['current_price'] ?? null), true),
+            $this->discordField('24h', $this->formatDiscordPercent($item['change_24h'] ?? $item['change_vs_yesterday_pct'] ?? null), true),
+            $this->discordField('7j', $this->formatDiscordPercent($item['change_7d'] ?? $item['change_vs_7d_pct'] ?? null), true),
+            $this->discordField('Volume 24h', (string) ($item['volume_24h'] ?? $item['sales_24h_volume'] ?? 0), true),
+            $this->discordField('Score', isset($item['score']) || isset($item['interest_score']) ? (string) ($item['score'] ?? $item['interest_score']) . '/100' : '-', true),
+            $this->discordField('Tag', (string) ($section !== '' ? $section : 'Radar'), true),
+        ];
+
+        if (isset($item['note']) && trim((string) $item['note']) !== '') {
+            $fields[] = $this->discordField('Note', $this->truncateForDiscord((string) $item['note'], 160), false);
+        }
+
+        $embed = [
+            'title' => $this->truncateForDiscord($name, 250),
+            'url' => $this->itemUrl($item),
+            'description' => $this->truncateForDiscord($reason, 350),
+            'color' => $color,
+            'thumbnail' => isset($item['image_url']) && is_string($item['image_url']) && $item['image_url'] !== ''
+                ? ['url' => $item['image_url']]
+                : null,
+            'fields' => array_values(array_filter($fields)),
+            'footer' => [
+                'text' => $section,
+            ],
+        ];
+
+        return array_filter($embed, static fn (mixed $value): bool => $value !== null);
+    }
+
+    private function discordField(string $name, string $value, bool $inline): array
+    {
+        $cleanValue = trim($value) !== '' ? trim($value) : '-';
+
+        return [
+            'name' => $name,
+            'value' => $this->truncateForDiscord($cleanValue, 1000),
+            'inline' => $inline,
+        ];
+    }
+
+    private function discordSparkline(array $series): string
+    {
+        if ($series === []) {
+            return 'Pas assez d historique.';
+        }
+
+        $levels = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        $values = array_map(static fn (array $point): int => (int) ($point['value'] ?? 0), $series);
+        $max = max(1, ...$values);
+        $parts = [];
+
+        foreach ($series as $index => $point) {
+            $value = $values[$index];
+            $levelIndex = (int) round(($value / $max) * (count($levels) - 1));
+            $parts[] = sprintf('%s%s', $levels[$levelIndex], (string) ($point['day'] ?? ''));
+        }
+
+        return implode(' ', $parts);
+    }
+
+    private function discordLeaderboard(array $rows, string $metric): string
+    {
+        if ($rows === []) {
+            return 'Aucun signal.';
+        }
+
+        $lines = [];
+        foreach ($rows as $row) {
+            $lines[] = sprintf(
+                '• %s — %s',
+                (string) ($row['name'] ?? 'item'),
+                $metric === 'change_24h'
+                    ? $this->formatDiscordPercent($row[$metric] ?? null)
+                    : (string) ($row[$metric] ?? '-')
+            );
+        }
+
+        return $this->truncateForDiscord(implode("\n", $lines), 1000);
+    }
+
+    private function discordWatchlistSummary(array $rows): string
+    {
+        if ($rows === []) {
+            return 'Aucun mouvement notable.';
+        }
+
+        $lines = [];
+        foreach ($rows as $row) {
+            $lines[] = sprintf('• %s — %s', (string) ($row['name'] ?? 'item'), (string) ($row['status'] ?? 'surveillance'));
+        }
+
+        return $this->truncateForDiscord(implode("\n", $lines), 1000);
+    }
+
+    private function formatDiscordPrice(mixed $value): string
+    {
+        $price = $this->floatOrNull($value);
+        return $price === null ? '-' : number_format($price, 2, ',', ' ') . ' EUR';
+    }
+
+    private function formatDiscordPercent(mixed $value): string
+    {
+        $percent = $this->floatOrNull($value);
+        if ($percent === null) {
+            return '-';
+        }
+
+        return sprintf('%s%s%%', $percent > 0 ? '+' : '', str_replace('.', ',', number_format($percent, 1, '.', '')));
+    }
+
+    private function truncateForDiscord(string $text, int $limit = 400): string
+    {
+        $trimmed = trim(preg_replace('/\s+/', ' ', $text) ?? '');
+        if ($trimmed === '') {
+            return '-';
+        }
+
+        $length = function_exists('mb_strlen') ? mb_strlen($trimmed) : strlen($trimmed);
+        if ($length <= $limit) {
+            return $trimmed;
+        }
+
+        $slice = function_exists('mb_substr')
+            ? mb_substr($trimmed, 0, max(1, $limit - 1))
+            : substr($trimmed, 0, max(1, $limit - 1));
+
+        return rtrim((string) $slice) . '…';
+    }
+
+    private function itemUrl(array $item): ?string
+    {
+        $url = $item['market_page'] ?? $item['item_page'] ?? null;
+        return is_string($url) && $url !== '' ? $url : null;
     }
 
     private function isRateLimitError(string $message): bool

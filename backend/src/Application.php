@@ -96,6 +96,11 @@ final class Application
                 return;
             }
 
+            if ($method === 'POST' && $path === '/api/admin/jobs/send-discord-report') {
+                JsonResponse::send($this->adminController()->trigger('send-discord-report'));
+                return;
+            }
+
             JsonResponse::send([
                 'message' => 'Route not found',
                 'method' => $method,

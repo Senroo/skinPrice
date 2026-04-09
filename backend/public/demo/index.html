@@ -132,7 +132,10 @@
               <h3>Rapport du jour</h3>
               <p>Résumé lisible, cartes items illustrées et sections actionnables.</p>
             </div>
-            <span class="pill pill-dark">Rapport prêt</span>
+            <div class="chip-row">
+              <span class="pill pill-dark">Rapport prêt</span>
+              <button class="action-button action-button-secondary" data-job="send-discord-report">Envoyer sur Discord</button>
+            </div>
           </div>
 
           <article class="panel summary-panel">
@@ -268,6 +271,7 @@
                 <button class="action-button" data-job="sync-market">Sync market</button>
                 <button class="action-button" data-job="sync-csfloat">Sync CSFloat</button>
                 <button class="action-button" data-job="generate-report">Generate report</button>
+                <button class="action-button action-button-secondary" data-job="send-discord-report">Send Discord report</button>
                 <button class="action-button action-button-secondary" id="refresh-live">Refresh UI</button>
               </div>
               <p class="table-meta" id="job-feedback">Les jobs écrivent dans le stockage local et mettent l'UI à jour.</p>
