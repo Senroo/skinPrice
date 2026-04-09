@@ -132,6 +132,34 @@
               <div class="table-list" id="filtered-items"></div>
             </article>
           </div>
+
+          <div class="section-block">
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4>Chat IA skin advisor</h4>
+                  <p>Demande si un skin est une bonne affaire. L’IA croise internet et les JSON stockés.</p>
+                </div>
+                <div class="chip-row">
+                  <span class="pill">Web + data</span>
+                  <span class="pill pill-outline">OpenRouter</span>
+                </div>
+              </div>
+              <div class="chat-layout">
+                <div class="chat-log" id="skin-chat-log"></div>
+                <form class="chat-composer" id="skin-chat-form">
+                  <label class="field">
+                    <span>Message</span>
+                    <textarea id="skin-chat-input" rows="3" placeholder="Ex: AK-47 | Redline (Field-Tested) à 17,40€ est-ce une bonne affaire ?"></textarea>
+                  </label>
+                  <div class="filter-actions">
+                    <button class="action-button" type="submit">Analyser ce skin</button>
+                    <button class="action-button action-button-secondary" type="button" id="skin-chat-suggest">Tester avec un top skin</button>
+                  </div>
+                </form>
+              </div>
+            </article>
+          </div>
         </section>
 
         <section class="view" data-view="report">

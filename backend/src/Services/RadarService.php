@@ -225,6 +225,28 @@ final class RadarService
         ];
     }
 
+    public function skinAdvice(array $payload): array
+    {
+        $message = trim((string) ($payload['message'] ?? ''));
+        if ($message === '') {
+            throw new RuntimeException('Envoie un skin ou une question pour lancer l analyse IA.');
+        }
+
+        $report = $this->reportToday();
+        $matchedItems = $this->findAdviceItems($message);
+        $observedPrice = $this->extractObservedPriceFromMessage($message);
+
+        if ($this->openRouterIsConfigured()) {
+            try {
+                return $this->generateSkinAdvice($message, $report, $matchedItems, $observedPrice);
+            } catch (\Throwable $exception) {
+                return $this->fallbackSkinAdvice($message, $matchedItems, $observedPrice, $exception->getMessage());
+            }
+        }
+
+        return $this->fallbackSkinAdvice($message, $matchedItems, $observedPrice, 'OPENROUTER_API_KEY absente');
+    }
+
     public function watchlist(): array
     {
         $marketIndex = [];
@@ -1318,6 +1340,41 @@ PS1;
         ];
     }
 
+    private function advicePayloadFromCanonicalState(string $message, array $report, array $matchedItems, ?float $observedPrice): array
+    {
+        $state = $this->readCanonicalState();
+        if ($state === []) {
+            $state = $this->buildCanonicalState();
+        }
+
+        $matchedSignals = [];
+        foreach ($matchedItems as $item) {
+            $name = (string) ($item['name'] ?? $item['market_hash_name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+
+            $matchedSignals[$name] = array_slice($this->getRecentListingSignals($name), 0, 3);
+        }
+
+        return [
+            'user_message' => $message,
+            'observed_price_eur' => $observedPrice,
+            'latest_report_context' => [
+                'date' => $report['date'] ?? null,
+                'summary_text' => $report['summary_text'] ?? null,
+                'ai_best_deals_text' => $report['ai_best_deals_text'] ?? null,
+                'top_opportunities' => array_slice($report['top_opportunities'] ?? [], 0, 5),
+                'watchlist_moves' => array_slice($report['watchlist_moves'] ?? [], 0, 5),
+            ],
+            'matched_items' => $matchedItems,
+            'matched_listing_signals' => $matchedSignals,
+            'watchlist' => array_slice($state['watchlist'] ?? [], 0, 15),
+            'recent_jobs' => array_slice($state['jobs'] ?? [], 0, 8),
+            'stats' => $state['stats'] ?? [],
+        ];
+    }
+
     private function readCanonicalState(): array
     {
         return $this->readJson($this->stateFile, []);
@@ -1487,6 +1544,62 @@ PS1;
             'model' => (string) ($response['model'] ?? $this->openRouterModel()),
             'generated_at' => date(DATE_ATOM),
         ];
+    }
+
+    private function generateSkinAdvice(string $message, array $report, array $matchedItems, ?float $observedPrice): array
+    {
+        $payload = [
+            'model' => $this->openRouterModel(),
+            'temperature' => 0.2,
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'Tu es un analyste CS2 orienté achat. Tu reçois la question utilisateur, un extrait des JSON persistés de l application et des items locaux matchés. Tu peux utiliser la recherche web OpenRouter pour confirmer le contexte public récent. Réponds en JSON strict avec les clés title, verdict, confidence, summary, action, positives, risks, matched_item_name, source_urls. verdict doit valoir good_deal, fair_price, avoid ou uncertain. positives et risks sont des tableaux de phrases courtes. N invente aucune donnée.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => json_encode([
+                        'task' => 'Dis si le skin mentionné semble être une bonne affaire maintenant. Utilise les données locales en priorité, puis la recherche web seulement pour confirmer le contexte de liquidité ou de momentum. Si le message contient un prix observé, compare-le au prix marché local. Réponse claire, prudente et exploitable pour décider achat / attente / éviter.',
+                        'context' => $this->advicePayloadFromCanonicalState($message, $report, $matchedItems, $observedPrice),
+                    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                ],
+            ],
+            'tools' => [
+                [
+                    'type' => 'openrouter:web_search',
+                    'parameters' => [
+                        'max_results' => 4,
+                        'max_total_results' => 8,
+                        'search_context_size' => 'medium',
+                    ],
+                ],
+            ],
+        ];
+
+        $response = $this->postJsonWithCurl(
+            'https://openrouter.ai/api/v1/chat/completions',
+            $payload,
+            [
+                'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
+                'HTTP-Referer: https://cs2-market-daily-radar.local',
+                'X-Title: CS2 Market Daily Radar Skin Advisor',
+            ],
+            90
+        );
+
+        $content = $this->extractAssistantContent($response);
+        $decoded = $this->decodeJsonObject($content);
+        if ($decoded === null) {
+            return $this->fallbackSkinAdvice($message, $matchedItems, $observedPrice, 'Réponse IA non structurée');
+        }
+
+        return $this->normalizeSkinAdviceResponse(
+            $decoded,
+            $matchedItems,
+            $observedPrice,
+            (($sources = $this->normalizeAiSources($decoded['source_urls'] ?? [])) !== [] ? $sources : $this->extractLinksFromText($content)),
+            (string) ($response['model'] ?? $this->openRouterModel())
+        );
     }
 
     private function extractAssistantContent(array $response): string
@@ -1734,6 +1847,205 @@ PS1;
         }
 
         return array_values(array_unique($normalized));
+    }
+
+    private function normalizeSkinAdviceResponse(array $decoded, array $matchedItems, ?float $observedPrice, array $sources, string $model): array
+    {
+        $matchedItemName = trim((string) ($decoded['matched_item_name'] ?? ''));
+        $matchedItem = null;
+        foreach ($matchedItems as $item) {
+            $name = (string) ($item['name'] ?? $item['market_hash_name'] ?? '');
+            if ($matchedItemName !== '' && strcasecmp($name, $matchedItemName) === 0) {
+                $matchedItem = $item;
+                break;
+            }
+        }
+        $matchedItem ??= $matchedItems[0] ?? null;
+
+        $positives = array_values(array_filter(array_map(
+            static fn (mixed $line): string => trim((string) $line),
+            is_array($decoded['positives'] ?? null) ? $decoded['positives'] : []
+        )));
+        $risks = array_values(array_filter(array_map(
+            static fn (mixed $line): string => trim((string) $line),
+            is_array($decoded['risks'] ?? null) ? $decoded['risks'] : []
+        )));
+
+        return [
+            'title' => trim((string) ($decoded['title'] ?? 'Avis IA sur ce skin')) ?: 'Avis IA sur ce skin',
+            'verdict' => $this->normalizeAdviceVerdict((string) ($decoded['verdict'] ?? 'uncertain')),
+            'confidence' => max(0, min(100, (int) ($decoded['confidence'] ?? 55))),
+            'summary' => trim((string) ($decoded['summary'] ?? '')) ?: 'Pas assez de données pour trancher proprement.',
+            'action' => trim((string) ($decoded['action'] ?? 'Surveille encore un peu le marché avant décision.')),
+            'positives' => array_slice($positives, 0, 4),
+            'risks' => array_slice($risks, 0, 4),
+            'matched_item' => $matchedItem,
+            'observed_price_eur' => $observedPrice,
+            'sources' => $sources,
+            'model' => $model,
+            'generated_at' => date(DATE_ATOM),
+        ];
+    }
+
+    private function fallbackSkinAdvice(string $message, array $matchedItems, ?float $observedPrice, ?string $error = null): array
+    {
+        $matchedItem = $matchedItems[0] ?? null;
+        if ($matchedItem === null) {
+            return [
+                'title' => 'Avis IA indisponible',
+                'verdict' => 'uncertain',
+                'confidence' => 20,
+                'summary' => 'Je n ai pas trouve de skin local qui corresponde clairement a ta demande.',
+                'action' => 'Donne le nom exact du skin ou colle aussi son prix observe.',
+                'positives' => [],
+                'risks' => [$error ?? 'Aucun match local clair dans les données.'],
+                'matched_item' => null,
+                'observed_price_eur' => $observedPrice,
+                'sources' => [],
+                'model' => null,
+                'generated_at' => date(DATE_ATOM),
+            ];
+        }
+
+        $marketPrice = $this->floatOrNull($matchedItem['current_price'] ?? null);
+        $change7d = $this->floatOrNull($matchedItem['change_vs_7d_pct'] ?? $matchedItem['change_7d'] ?? null);
+        $change24h = $this->floatOrNull($matchedItem['change_vs_yesterday_pct'] ?? $matchedItem['change_24h'] ?? null);
+        $volumeRatio = $this->floatOrNull($matchedItem['volume_ratio_24h_7d'] ?? null);
+        $score = (int) ($matchedItem['interest_score'] ?? $matchedItem['score'] ?? 0);
+
+        $verdict = 'fair_price';
+        $summary = 'Le prix paraît globalement en ligne avec le marché local.';
+        $positives = [];
+        $risks = [];
+        $action = 'Compare encore avec les volumes et évite de chase un mouvement trop violent.';
+
+        if ($observedPrice !== null && $marketPrice !== null && $observedPrice < $marketPrice * 0.95) {
+            $verdict = 'good_deal';
+            $summary = 'Le prix observé est en dessous du marché local actuel, ce qui ressemble à une vraie opportunité.';
+            $positives[] = sprintf('Prix observé %.2f EUR sous le marché local %.2f EUR.', $observedPrice, $marketPrice);
+            $action = 'Vérifie l état exact du skin et exécute vite si le listing est propre.';
+        } elseif ($observedPrice !== null && $marketPrice !== null && $observedPrice > $marketPrice * 1.05) {
+            $verdict = 'avoid';
+            $summary = 'Le prix observé est au-dessus du marché local actuel, ce qui réduit fortement l intérêt de l achat.';
+            $risks[] = sprintf('Prix observé %.2f EUR au-dessus du marché local %.2f EUR.', $observedPrice, $marketPrice);
+            $action = 'Passe ton tour ou négocie un meilleur prix.';
+        }
+
+        if ($change7d !== null && $change7d <= -8.0) {
+            $positives[] = sprintf('Le skin reste %.1f%% sous sa moyenne récente 7 jours.', $change7d);
+        }
+
+        if ($change24h !== null && abs($change24h) >= 12.0) {
+            $risks[] = sprintf('Le momentum 24h est très marqué (%.1f%%), donc le signal peut être instable.', $change24h);
+        }
+
+        if ($volumeRatio !== null && $volumeRatio >= 1.5) {
+            $positives[] = sprintf('Le volume 24h accélère x%.1f par rapport au rythme 7 jours.', $volumeRatio);
+        } else {
+            $risks[] = 'La liquidité n accélère pas franchement, donc la sortie peut être moins fluide.';
+        }
+
+        if ($score < self::OPPORTUNITY_THRESHOLD) {
+            $risks[] = sprintf('Le score radar reste modéré (%d/100).', $score);
+        }
+
+        return [
+            'title' => 'Avis IA local sur ce skin',
+            'verdict' => $verdict,
+            'confidence' => $verdict === 'good_deal' ? 72 : ($verdict === 'avoid' ? 76 : 58),
+            'summary' => $summary,
+            'action' => $action,
+            'positives' => array_slice(array_values(array_unique($positives)), 0, 4),
+            'risks' => array_slice(array_values(array_unique(array_filter(array_merge($risks, $error ? [$error] : [])))), 0, 4),
+            'matched_item' => $matchedItem,
+            'observed_price_eur' => $observedPrice,
+            'sources' => [],
+            'model' => $this->openRouterIsConfigured() ? $this->openRouterModel() : null,
+            'generated_at' => date(DATE_ATOM),
+        ];
+    }
+
+    private function findAdviceItems(string $message, int $limit = 5): array
+    {
+        $market = $this->readMarketData()['items'] ?? [];
+        if ($market === []) {
+            return [];
+        }
+
+        $lower = static fn (string $value): string => function_exists('mb_strtolower') ? mb_strtolower($value) : strtolower($value);
+        $length = static fn (string $value): int => function_exists('mb_strlen') ? mb_strlen($value) : strlen($value);
+
+        $query = $lower($message);
+        $tokens = preg_split('/[^[:alnum:]\p{L}\p{N}\-\|]+/u', $query) ?: [];
+        $tokens = array_values(array_filter(array_unique($tokens), static fn (string $token): bool => $length($token) >= 3));
+        $scored = [];
+
+        foreach ($market as $item) {
+            $name = $lower((string) ($item['market_hash_name'] ?? $item['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+
+            $score = 0;
+            if (str_contains($query, $name) || str_contains($name, $query)) {
+                $score += 120;
+            }
+
+            foreach ($tokens as $token) {
+                if (str_contains($name, $token)) {
+                    $score += 18;
+                }
+            }
+
+            if ($score <= 0) {
+                continue;
+            }
+
+            $scored[] = [
+                'score' => $score,
+                'item' => $this->mapAdviceItem($item),
+            ];
+        }
+
+        usort($scored, static fn (array $left, array $right): int => $right['score'] <=> $left['score']);
+
+        return array_slice(array_values(array_map(static fn (array $entry): array => $entry['item'], $scored)), 0, $limit);
+    }
+
+    private function mapAdviceItem(array $item): array
+    {
+        return [
+            'id' => $item['id'] ?? $this->idFromName((string) ($item['market_hash_name'] ?? $item['name'] ?? '')),
+            'name' => $item['name'] ?? $item['market_hash_name'] ?? null,
+            'market_hash_name' => $item['market_hash_name'] ?? $item['name'] ?? null,
+            'weapon' => $item['weapon'] ?? null,
+            'rarity' => $item['rarity'] ?? null,
+            'current_price' => $item['current_price'] ?? null,
+            'change_vs_yesterday_pct' => $item['change_vs_yesterday_pct'] ?? null,
+            'change_vs_7d_pct' => $item['change_vs_7d_pct'] ?? null,
+            'sales_24h_volume' => $item['sales_24h_volume'] ?? null,
+            'volume_ratio_24h_7d' => $item['volume_ratio_24h_7d'] ?? null,
+            'interest_score' => $item['interest_score'] ?? null,
+            'image_url' => $item['image_url'] ?? null,
+            'item_page' => $item['item_page'] ?? null,
+            'market_page' => $item['market_page'] ?? null,
+            'tags' => $item['tags'] ?? [],
+        ];
+    }
+
+    private function extractObservedPriceFromMessage(string $message): ?float
+    {
+        if (preg_match('/(\d+(?:[.,]\d{1,2})?)\s*(?:€|eur|euro)/iu', $message, $matches) !== 1) {
+            return null;
+        }
+
+        return $this->floatOrNull(str_replace(',', '.', $matches[1]));
+    }
+
+    private function normalizeAdviceVerdict(string $verdict): string
+    {
+        $value = strtolower(trim($verdict));
+        return in_array($value, ['good_deal', 'fair_price', 'avoid', 'uncertain'], true) ? $value : 'uncertain';
     }
 
     private function extractLinksFromText(string $text): array

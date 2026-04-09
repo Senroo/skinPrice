@@ -10,6 +10,7 @@ const state = {
   watchlist: null,
   filteredItems: [],
   filteredMeta: null,
+  skinAdvisorMessages: [],
   activeView: "dashboard",
   lastNonItemView: "dashboard",
 };
@@ -679,6 +680,81 @@ const renderFilteredItems = () => {
       `;
 };
 
+const verdictLabel = (verdict) => ({
+  good_deal: "Bonne affaire",
+  fair_price: "Prix correct",
+  avoid: "À éviter",
+  uncertain: "Incertain",
+}[verdict] ?? "Incertain");
+
+const renderSkinAdvisor = () => {
+  const root = document.getElementById("skin-chat-log");
+  if (!root) {
+    return;
+  }
+
+  const messages = state.skinAdvisorMessages ?? [];
+  root.innerHTML =
+    messages.length > 0
+      ? messages
+          .map((message) => {
+            if (message.role === "user") {
+              return `
+                <article class="chat-message user">
+                  <p class="eyebrow">Toi</p>
+                  <strong>${escapeHtml(message.text)}</strong>
+                </article>
+              `;
+            }
+
+            if (message.role === "assistant" && message.pending) {
+              return `
+                <article class="chat-message">
+                  <p class="eyebrow">IA</p>
+                  <span class="table-meta">Analyse en cours du skin demandé...</span>
+                </article>
+              `;
+            }
+
+            const response = message.response ?? {};
+            const item = response.matched_item ?? null;
+            return `
+              <article class="chat-message">
+                <p class="eyebrow">IA skin advisor</p>
+                <div class="chip-row">
+                  <span class="badge">${escapeHtml(verdictLabel(response.verdict))}</span>
+                  <span class="badge">Confiance ${escapeHtml(String(response.confidence ?? "-"))}/100</span>
+                  ${response.model ? `<span class="badge">${escapeHtml(response.model)}</span>` : ""}
+                </div>
+                <strong>${escapeHtml(response.title ?? "Avis IA")}</strong>
+                <p>${escapeHtml(response.summary ?? "")}</p>
+                ${item ? `
+                  <div class="chat-card">
+                    ${itemVisual(item, { className: "skin-thumb", label: item.name })}
+                    <div class="chat-card-copy">
+                      ${itemNameMarkup(item)}
+                      <span class="table-meta">${euro(item.current_price)} • ${pct(item.change_vs_yesterday_pct)} 24h • ${pct(item.change_vs_7d_pct)} 7j</span>
+                      <span class="table-meta">volume ${item.sales_24h_volume ?? 0} • score ${item.interest_score ?? "-"}/100</span>
+                      ${itemActions(item)}
+                    </div>
+                  </div>
+                ` : ""}
+                ${response.action ? `<p><strong>Action :</strong> ${escapeHtml(response.action)}</p>` : ""}
+                ${(response.positives ?? []).length > 0 ? `<div><strong>Points pour</strong><ul class="chat-list">${response.positives.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul></div>` : ""}
+                ${(response.risks ?? []).length > 0 ? `<div><strong>Risques</strong><ul class="chat-list">${response.risks.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul></div>` : ""}
+                ${(response.sources ?? []).length > 0 ? `<div class="item-link-row">${response.sources.map((source) => `<a class="item-link" href="${escapeHtml(source)}" target="_blank" rel="noreferrer">Source web</a>`).join("")}</div>` : ""}
+              </article>
+            `;
+          })
+          .join("")
+      : `
+        <article class="chat-message">
+          <p class="eyebrow">IA skin advisor</p>
+          <span class="table-meta">Envoie un nom de skin ou un message avec prix, par exemple : “AWP | Asiimov (Battle-Scarred) à 145€ est-ce une bonne affaire ?”</span>
+        </article>
+      `;
+};
+
 const renderGainersLosersVolume = () => {
   renderSimpleTable("gainers-list", state.reportToday?.top_gainers ?? [], (item) => `
     <article class="table-item">
@@ -1015,6 +1091,7 @@ const renderAll = () => {
   renderWatchlist();
   renderWatchlistLinked();
   renderFilteredItems();
+  renderSkinAdvisor();
   renderGainersLosersVolume();
   renderGainersLosersVolumeLinked();
   renderHistory();
@@ -1105,6 +1182,68 @@ const bindFilterPanel = () => {
   }
 };
 
+const bindSkinAdvisor = () => {
+  const form = document.getElementById("skin-chat-form");
+  const input = document.getElementById("skin-chat-input");
+  if (form && input instanceof HTMLTextAreaElement) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) {
+        return;
+      }
+
+      state.skinAdvisorMessages.push({ role: "user", text });
+      const pendingMessage = { role: "assistant", pending: true };
+      state.skinAdvisorMessages.push(pendingMessage);
+      renderSkinAdvisor();
+      input.value = "";
+
+      try {
+        const response = await fetchJson("/api/assistant/skin-advice", {
+          method: "POST",
+          body: JSON.stringify({ message: text }),
+        });
+        const index = state.skinAdvisorMessages.indexOf(pendingMessage);
+        if (index >= 0) {
+          state.skinAdvisorMessages[index] = { role: "assistant", response };
+        }
+      } catch (error) {
+        const index = state.skinAdvisorMessages.indexOf(pendingMessage);
+        if (index >= 0) {
+          state.skinAdvisorMessages[index] = {
+            role: "assistant",
+            response: {
+              title: "Analyse indisponible",
+              verdict: "uncertain",
+              confidence: 0,
+              summary: error.message,
+              action: "Réessaie dans un instant ou vérifie la configuration OpenRouter.",
+              positives: [],
+              risks: [error.message],
+              sources: [],
+            },
+          };
+        }
+      }
+
+      renderSkinAdvisor();
+    });
+  }
+
+  document.getElementById("skin-chat-suggest")?.addEventListener("click", () => {
+    const suggestion = state.reportToday?.top_opportunities?.[0];
+    if (!(input instanceof HTMLTextAreaElement)) {
+      return;
+    }
+
+    input.value = suggestion?.name
+      ? `${suggestion.name} à ${typeof suggestion.price === "number" ? suggestion.price.toFixed(2).replace(".", ",") : "?"}€ est-ce une bonne affaire aujourd’hui ?`
+      : "AK-47 | Redline (Field-Tested) à 17,40€ est-ce une bonne affaire ?";
+    input.focus();
+  });
+};
+
 const bindAdminActions = () => {
   document.querySelectorAll("[data-job]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1147,6 +1286,7 @@ const init = async () => {
   bindAdminActions();
   bindItemOpenActions();
   bindFilterPanel();
+  bindSkinAdvisor();
 
   try {
     await loadData();

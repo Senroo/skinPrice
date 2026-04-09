@@ -66,6 +66,11 @@ final class Application
                 return;
             }
 
+            if ($method === 'POST' && $path === '/api/assistant/skin-advice') {
+                JsonResponse::send($this->publicController()->skinAdvice($this->readJsonBody()));
+                return;
+            }
+
             if ($method === 'GET' && $path === '/api/admin/health') {
                 JsonResponse::send($this->adminController()->health());
                 return;
@@ -122,5 +127,16 @@ final class Application
     private function adminController(): AdminController
     {
         return $this->adminController ??= new AdminController();
+    }
+
+    private function readJsonBody(): array
+    {
+        $raw = file_get_contents('php://input');
+        if (!is_string($raw) || trim($raw) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        return is_array($decoded) ? $decoded : [];
     }
 }

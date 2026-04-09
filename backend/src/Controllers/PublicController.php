@@ -42,4 +42,9 @@ final class PublicController
     {
         return $this->radarService->watchlist();
     }
+
+    public function skinAdvice(array $payload): array
+    {
+        return $this->radarService->skinAdvice($payload);
+    }
 }
