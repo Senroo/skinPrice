@@ -110,18 +110,26 @@
             <article class="panel">
               <div class="card-header">
                 <div>
-                  <h4>Filtres simulés</h4>
-                  <p>Projection de l’interface de recherche produit.</p>
+                  <h4>Filtres live</h4>
+                  <p>Recherche produit branchée sur l’API items.</p>
                 </div>
               </div>
-              <div class="filter-grid">
-                <label class="field"><span>Recherche</span><input value="Redline" readonly /></label>
-                <label class="field"><span>Prix min</span><input value="5" readonly /></label>
-                <label class="field"><span>Prix max</span><input value="800" readonly /></label>
-                <label class="field"><span>Volume mini</span><input value="25" readonly /></label>
-                <label class="field"><span>Rareté</span><input value="Classified" readonly /></label>
-                <label class="field"><span>Score mini</span><input value="70" readonly /></label>
-              </div>
+              <form class="filter-panel" id="filter-form">
+                <div class="filter-grid">
+                  <label class="field"><span>Recherche</span><input id="filter-query" name="q" value="Redline" /></label>
+                  <label class="field"><span>Prix min</span><input id="filter-price-min" name="price_min" value="5" inputmode="decimal" /></label>
+                  <label class="field"><span>Prix max</span><input id="filter-price-max" name="price_max" value="800" inputmode="decimal" /></label>
+                  <label class="field"><span>Volume mini</span><input id="filter-volume-min" name="volume_min" value="25" inputmode="numeric" /></label>
+                  <label class="field"><span>Rareté</span><input id="filter-rarity" name="rarity" value="Classified" /></label>
+                  <label class="field"><span>Score mini</span><input id="filter-score-min" name="score_min" value="70" inputmode="numeric" /></label>
+                </div>
+                <div class="filter-actions">
+                  <button class="action-button" type="submit">Appliquer les filtres</button>
+                  <button class="action-button action-button-secondary" type="button" id="reset-filters">Reset</button>
+                </div>
+              </form>
+              <p class="table-meta" id="filter-feedback">Chargement des résultats filtrés...</p>
+              <div class="table-list" id="filtered-items"></div>
             </article>
           </div>
         </section>

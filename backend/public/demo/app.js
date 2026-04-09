@@ -8,6 +8,8 @@ const state = {
   health: null,
   jobs: null,
   watchlist: null,
+  filteredItems: [],
+  filteredMeta: null,
   activeView: "dashboard",
   lastNonItemView: "dashboard",
 };
@@ -88,6 +90,7 @@ const knownItems = () => [
   ...(state.reportToday?.top_losers ?? []),
   ...(state.reportToday?.top_volume ?? []),
   ...(state.watchlist?.data ?? []),
+  ...(state.filteredItems ?? []),
   ...(state.item ? [state.item] : []),
 ];
 
@@ -285,6 +288,35 @@ const fetchJson = async (path, options = {}) => {
   }
 
   return payload;
+};
+
+const defaultFilterValues = {
+  q: "Redline",
+  price_min: "5",
+  price_max: "800",
+  volume_min: "25",
+  rarity: "Classified",
+  score_min: "70",
+};
+
+const readFilterValues = () => ({
+  q: document.getElementById("filter-query")?.value?.trim() ?? "",
+  price_min: document.getElementById("filter-price-min")?.value?.trim() ?? "",
+  price_max: document.getElementById("filter-price-max")?.value?.trim() ?? "",
+  volume_min: document.getElementById("filter-volume-min")?.value?.trim() ?? "",
+  rarity: document.getElementById("filter-rarity")?.value?.trim() ?? "",
+  score_min: document.getElementById("filter-score-min")?.value?.trim() ?? "",
+});
+
+const buildItemsQuery = (filters) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== "") {
+      params.set(key, value);
+    }
+  });
+  params.set("per_page", "12");
+  return `/api/items?${params.toString()}`;
 };
 
 const formatCooldown = (seconds) => {
@@ -601,6 +633,50 @@ const renderWatchlist = () => {
       <div class="value-stack"><strong>${euro(item.price)}</strong><span class="table-meta">watchlist</span></div>
     </article>
   `);
+};
+
+const renderFilteredItems = () => {
+  const root = document.getElementById("filtered-items");
+  const feedback = document.getElementById("filter-feedback");
+  if (!root || !feedback) {
+    return;
+  }
+
+  const rows = state.filteredItems ?? [];
+  const total = state.filteredMeta?.total ?? rows.length;
+  feedback.textContent = `${total} item${total > 1 ? "s" : ""} trouvés avec les filtres actuels.`;
+
+  root.innerHTML =
+    rows.length > 0
+      ? rows
+          .map(
+            (item) => `
+            <article class="table-item filtered-item">
+              <div class="table-item-main table-item-with-image">
+                ${itemVisual(item, { label: item.name })}
+                <div class="table-item-copy">
+                  ${itemNameMarkup(item)}
+                  <span class="table-meta">${item.rarity ?? "Rareté inconnue"} • ${item.weapon ?? "Skin CS2"}</span>
+                  <span class="table-meta">volume ${item.sales_24h_volume ?? 0} • score ${item.interest_score ?? "-"}/100</span>
+                  ${itemActions(item)}
+                </div>
+              </div>
+              <div class="value-stack">
+                <strong>${euro(item.current_price)}</strong>
+                <span class="table-meta">${pct(item.change_vs_yesterday_pct)} 24h</span>
+              </div>
+            </article>
+          `
+          )
+          .join("")
+      : `
+        <article class="table-item filtered-item">
+          <div class="table-item-main">
+            <strong>Aucun item ne correspond aux filtres actuels.</strong>
+            <span class="table-meta">Essaie d’élargir la rareté, le volume mini ou le score mini.</span>
+          </div>
+        </article>
+      `;
 };
 
 const renderGainersLosersVolume = () => {
@@ -938,6 +1014,7 @@ const renderAll = () => {
   renderReportSummary();
   renderWatchlist();
   renderWatchlistLinked();
+  renderFilteredItems();
   renderGainersLosersVolume();
   renderGainersLosersVolumeLinked();
   renderHistory();
@@ -949,7 +1026,8 @@ const renderAll = () => {
 };
 
 const loadData = async () => {
-  const [overview, reportToday, reportHistory, health, jobs, watchlist, items] = await Promise.all([
+  const activeFilters = document.getElementById("filter-form") ? readFilterValues() : defaultFilterValues;
+  const [overview, reportToday, reportHistory, health, jobs, watchlist, items, filteredItems] = await Promise.all([
     fetchJson("/api/dashboard/overview"),
     fetchJson("/api/reports/today"),
     fetchJson("/api/reports/history"),
@@ -957,12 +1035,23 @@ const loadData = async () => {
     fetchJson("/api/admin/jobs"),
     fetchJson("/api/watchlist"),
     fetchJson("/api/items?per_page=1"),
+    fetchJson(buildItemsQuery(activeFilters)),
   ]);
 
   const firstItem = items.data?.[0] ?? null;
   const item = firstItem ? await fetchJson(`/api/items/${firstItem.id}`) : null;
 
-  Object.assign(state, { overview, reportToday, reportHistory, item, health, jobs, watchlist });
+  Object.assign(state, {
+    overview,
+    reportToday,
+    reportHistory,
+    item,
+    health,
+    jobs,
+    watchlist,
+    filteredItems: filteredItems.data ?? [],
+    filteredMeta: filteredItems.meta ?? null,
+  });
 };
 
 const setButtonsDisabled = (disabled) => {
@@ -973,6 +1062,47 @@ const setButtonsDisabled = (disabled) => {
 
     button.disabled = disabled;
   });
+};
+
+const applyFilters = async () => {
+  const feedback = document.getElementById("filter-feedback");
+  try {
+    if (feedback) {
+      feedback.textContent = "Chargement des résultats filtrés...";
+    }
+
+    const payload = await fetchJson(buildItemsQuery(readFilterValues()));
+    state.filteredItems = payload.data ?? [];
+    state.filteredMeta = payload.meta ?? null;
+    renderFilteredItems();
+  } catch (error) {
+    if (feedback) {
+      feedback.textContent = error.message;
+    }
+  }
+};
+
+const bindFilterPanel = () => {
+  const form = document.getElementById("filter-form");
+  if (form) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await applyFilters();
+    });
+  }
+
+  const resetButton = document.getElementById("reset-filters");
+  if (resetButton) {
+    resetButton.addEventListener("click", async () => {
+      Object.entries(defaultFilterValues).forEach(([key, value]) => {
+        const input = form?.querySelector(`[name="${key}"]`);
+        if (input instanceof HTMLInputElement) {
+          input.value = value;
+        }
+      });
+      await applyFilters();
+    });
+  }
 };
 
 const bindAdminActions = () => {
@@ -1016,6 +1146,7 @@ const init = async () => {
   bindViews();
   bindAdminActions();
   bindItemOpenActions();
+  bindFilterPanel();
 
   try {
     await loadData();

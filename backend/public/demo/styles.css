@@ -405,7 +405,25 @@ button { border: 0; }
   text-align: center;
 }
 
+.filter-panel {
+  display: grid;
+  gap: 14px;
+}
+
 .filter-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.filtered-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.filtered-item .table-item-copy {
+  gap: 4px;
+}
 .field { display: grid; gap: 8px; }
 .field input {
   width: 100%;
