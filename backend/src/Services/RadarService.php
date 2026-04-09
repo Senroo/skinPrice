@@ -2244,10 +2244,10 @@ PS1;
         foreach ($series as $index => $point) {
             $value = $values[$index];
             $levelIndex = (int) round(($value / $max) * (count($levels) - 1));
-            $parts[] = sprintf('%s%s', $levels[$levelIndex], (string) ($point['day'] ?? ''));
+            $parts[] = sprintf('%s %s (%d)', (string) ($point['day'] ?? ''), $levels[$levelIndex], $value);
         }
 
-        return implode(' ', $parts);
+        return implode("\n", $parts);
     }
 
     private function discordLeaderboard(array $rows, string $metric): string
@@ -2302,7 +2302,12 @@ PS1;
 
     private function truncateForDiscord(string $text, int $limit = 400): string
     {
-        $trimmed = trim(preg_replace('/\s+/', ' ', $text) ?? '');
+        $normalized = str_replace(["\r\n", "\r"], "\n", $text);
+        $lines = array_map(
+            static fn (string $line): string => trim((string) preg_replace('/[^\S\n]+/', ' ', $line)),
+            explode("\n", $normalized)
+        );
+        $trimmed = trim(implode("\n", array_values(array_filter($lines, static fn (string $line): bool => $line !== ''))));
         if ($trimmed === '') {
             return '-';
         }
