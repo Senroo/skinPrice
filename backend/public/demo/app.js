@@ -8,6 +8,8 @@ const state = {
   health: null,
   jobs: null,
   watchlist: null,
+  positions: null,
+  profiles: null,
   filteredItems: [],
   filteredMeta: null,
   skinAdvisorMessages: [],
@@ -91,7 +93,9 @@ const knownItems = () => [
   ...(state.reportToday?.top_losers ?? []),
   ...(state.reportToday?.top_volume ?? []),
   ...(state.watchlist?.data ?? []),
+  ...(state.positions?.data ?? []),
   ...(state.filteredItems ?? []),
+  ...(state.item?.positions ?? []),
   ...(state.item ? [state.item] : []),
 ];
 
@@ -680,6 +684,179 @@ const renderFilteredItems = () => {
       `;
 };
 
+const positionSignalClass = (signal) =>
+  ({
+    sell_now: "badge-position-sell",
+    watch_sell: "badge-position-watch",
+    hold: "badge-position-hold",
+  }[signal] ?? "badge-position-hold");
+
+const renderPositionRows = (rows, emptyText, { allowDelete = false } = {}) =>
+  rows.length > 0
+    ? rows
+        .map(
+          (position) => `
+          <article class="table-item">
+            <div class="table-item-main table-item-with-image">
+              ${itemVisual(position, { label: position.name })}
+              <div class="table-item-copy">
+                ${itemNameMarkup(position)}
+                ${position.profile_name ? `<span class="table-meta">profil ${escapeHtml(position.profile_name)}</span>` : `<span class="table-meta">portefeuille libre</span>`}
+                <span class="table-meta">achat ${euro(position.buy_price_eur)} le ${escapeHtml(position.buy_date)} • ${escapeHtml(String(position.days_held ?? 0))}j</span>
+                <span class="table-meta">${escapeHtml(position.primary_reason ?? "")}</span>
+                <div class="badge-row">
+                  <span class="badge ${positionSignalClass(position.sell_signal)}">${escapeHtml(position.sell_label ?? "Garder")}</span>
+                  ${position.target_price_eur != null ? `<span class="badge">objectif ${euro(position.target_price_eur)}</span>` : ""}
+                  ${typeof position.buy_float === "number" ? `<span class="badge">float ${escapeHtml(position.buy_float.toFixed(4))}${position.buy_float_wear ? ` • ${escapeHtml(position.buy_float_wear)}` : ""}</span>` : ""}
+                </div>
+                ${position.float_note ? `<span class="table-meta">${escapeHtml(position.float_note)}</span>` : ""}
+                ${position.note ? `<span class="table-meta">note: ${escapeHtml(position.note)}</span>` : ""}
+                ${itemActions(position)}
+              </div>
+            </div>
+            <div class="value-stack">
+              <strong class="${position.pnl_eur > 0 ? "positive" : (position.pnl_eur < 0 ? "negative" : "neutral")}">${euro(position.current_price_eur)}</strong>
+              <span class="${position.pnl_pct > 0 ? "positive" : (position.pnl_pct < 0 ? "negative" : "neutral")}">${pct(position.pnl_pct)} vs achat</span>
+              <span class="table-meta">${euro(position.pnl_eur)} PnL</span>
+              ${allowDelete ? `<button class="item-link item-link-button item-link-danger" type="button" data-delete-position="${escapeHtml(position.position_id)}">Supprimer</button>` : ""}
+            </div>
+          </article>
+        `
+        )
+        .join("")
+    : `
+      <article class="table-item">
+        <div class="table-item-main">
+          <strong>Aucune position pour l instant</strong>
+          <span class="table-meta">${escapeHtml(emptyText)}</span>
+        </div>
+      </article>
+      `;
+
+const renderProfiles = () => {
+  const root = document.getElementById("profiles-table");
+  const totalPill = document.getElementById("profiles-total-pill");
+  const reviewPill = document.getElementById("profiles-review-pill");
+  if (!root) {
+    return;
+  }
+
+  const profiles = state.profiles?.data ?? [];
+  const meta = state.profiles?.meta ?? {};
+
+  if (totalPill) {
+    totalPill.textContent = `${meta.total ?? profiles.length} profil${(meta.total ?? profiles.length) > 1 ? "s" : ""}`;
+  }
+  if (reviewPill) {
+    reviewPill.textContent = `${meta.profiles_ready_to_review ?? 0} a revoir`;
+  }
+
+  root.innerHTML =
+    profiles.length > 0
+      ? profiles
+          .map(
+            (profile) => `
+            <article class="table-item">
+              <div class="table-item-main">
+                <strong>${escapeHtml(profile.name)}</strong>
+                <span class="table-meta">${escapeHtml(profile.summary ?? "")}</span>
+                <div class="badge-row">
+                  <span class="badge">${escapeHtml(profile.strategy ?? "balanced")}</span>
+                  <span class="badge ${positionSignalClass((profile.ready_to_sell_count ?? 0) > 0 ? "sell_now" : ((profile.watch_count ?? 0) > 0 ? "watch_sell" : "hold"))}">${escapeHtml(String(profile.ready_to_sell_count ?? 0))} sell • ${escapeHtml(String(profile.watch_count ?? 0))} watch</span>
+                  <span class="badge">${escapeHtml(String(profile.positions_count ?? 0))} positions</span>
+                </div>
+                ${profile.note ? `<span class="table-meta">${escapeHtml(profile.note)}</span>` : ""}
+                <div class="item-link-row">
+                  ${profile.steam_profile_url ? `<a class="item-link" href="${escapeHtml(profile.steam_profile_url)}" target="_blank" rel="noreferrer">Voir inventaire</a>` : ""}
+                  ${profile.discord_webhook_url ? `<span class="item-link">Discord profilé</span>` : ""}
+                  <button class="item-link item-link-button item-link-danger" type="button" data-delete-profile="${escapeHtml(profile.profile_id)}">Supprimer</button>
+                </div>
+              </div>
+              <div class="value-stack">
+                <strong class="${profile.pnl_eur > 0 ? "positive" : (profile.pnl_eur < 0 ? "negative" : "neutral")}">${euro(profile.portfolio_value_eur)}</strong>
+                <span class="${profile.pnl_pct > 0 ? "positive" : (profile.pnl_pct < 0 ? "negative" : "neutral")}">${pct(profile.pnl_pct)} latent</span>
+                <span class="table-meta">cout ${euro(profile.cost_basis_eur)}</span>
+              </div>
+            </article>
+          `
+          )
+          .join("")
+      : `
+        <article class="table-item">
+          <div class="table-item-main">
+            <strong>Aucun profil pour l instant</strong>
+            <span class="table-meta">Cree un premier portefeuille pour recevoir une lecture quotidienne par profil.</span>
+          </div>
+        </article>
+      `;
+};
+
+const populateProfileSelect = () => {
+  const select = document.getElementById("position-profile");
+  if (!(select instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const currentValue = select.value;
+  const profiles = state.profiles?.data ?? [];
+  select.innerHTML = [
+    `<option value="">Portefeuille libre</option>`,
+    ...profiles.map((profile) => `<option value="${escapeHtml(profile.profile_id)}">${escapeHtml(profile.name)}</option>`),
+  ].join("");
+
+  if (profiles.some((profile) => profile.profile_id === currentValue)) {
+    select.value = currentValue;
+  }
+};
+
+const renderPositions = () => {
+  const root = document.getElementById("positions-table");
+  const openPill = document.getElementById("positions-open-pill");
+  const readyPill = document.getElementById("positions-ready-pill");
+  if (!root) {
+    return;
+  }
+
+  const positions = state.positions?.data ?? [];
+  const meta = state.positions?.meta ?? {};
+  if (openPill) {
+    openPill.textContent = `${meta.total ?? positions.length} position${(meta.total ?? positions.length) > 1 ? "s" : ""}`;
+  }
+  if (readyPill) {
+    readyPill.textContent = `${meta.ready_to_sell ?? 0} a vendre`;
+  }
+
+  root.innerHTML = renderPositionRows(
+    positions.slice(0, 6),
+    "Ajoute une position depuis une fiche item pour suivre une vraie strategie de sortie."
+  );
+};
+
+const renderItemPositions = () => {
+  const root = document.getElementById("item-positions");
+  if (!root) {
+    return;
+  }
+
+  root.innerHTML = renderPositionRows(
+    state.item?.positions ?? [],
+    "Cette fiche n a pas encore de suivi achat / vente. Renseigne ton prix d entree pour lancer le tracking.",
+    { allowDelete: true }
+  );
+};
+
+const syncPositionFormWithItem = () => {
+  const buyDate = document.getElementById("position-buy-date");
+  const feedback = document.getElementById("position-feedback");
+  if (buyDate instanceof HTMLInputElement && !buyDate.value) {
+    buyDate.value = new Date().toISOString().slice(0, 10);
+  }
+
+  if (feedback && state.item?.name) {
+    feedback.textContent = `Position de sortie sur ${state.item.name}: enregistre ton achat pour comparer avec le marche live.`;
+  }
+};
+
 const verdictLabel = (verdict) => ({
   good_deal: "Bonne affaire",
   fair_price: "Prix correct",
@@ -1090,6 +1267,9 @@ const renderAll = () => {
   renderReportSummary();
   renderWatchlist();
   renderWatchlistLinked();
+  renderPositions();
+  renderProfiles();
+  populateProfileSelect();
   renderFilteredItems();
   renderSkinAdvisor();
   renderGainersLosersVolume();
@@ -1097,6 +1277,8 @@ const renderAll = () => {
   renderHistory();
   renderItem();
   renderItemLinked();
+  renderItemPositions();
+  syncPositionFormWithItem();
   renderHealth();
   renderJobs();
   renderAdminActionsState();
@@ -1104,19 +1286,23 @@ const renderAll = () => {
 
 const loadData = async () => {
   const activeFilters = document.getElementById("filter-form") ? readFilterValues() : defaultFilterValues;
-  const [overview, reportToday, reportHistory, health, jobs, watchlist, items, filteredItems] = await Promise.all([
+  const currentItemId = state.item?.id ?? null;
+  const [overview, reportToday, reportHistory, health, jobs, watchlist, positions, profiles, items, filteredItems] = await Promise.all([
     fetchJson("/api/dashboard/overview"),
     fetchJson("/api/reports/today"),
     fetchJson("/api/reports/history"),
     fetchJson("/api/admin/health"),
     fetchJson("/api/admin/jobs"),
     fetchJson("/api/watchlist"),
+    fetchJson("/api/positions"),
+    fetchJson("/api/profiles"),
     fetchJson("/api/items?per_page=1"),
     fetchJson(buildItemsQuery(activeFilters)),
   ]);
 
-  const firstItem = items.data?.[0] ?? null;
-  const item = firstItem ? await fetchJson(`/api/items/${firstItem.id}`) : null;
+  const fallbackItem = items.data?.[0] ?? null;
+  const itemIdToLoad = currentItemId ?? fallbackItem?.id ?? null;
+  const item = itemIdToLoad ? await fetchJson(`/api/items/${itemIdToLoad}`) : null;
 
   Object.assign(state, {
     overview,
@@ -1126,6 +1312,8 @@ const loadData = async () => {
     health,
     jobs,
     watchlist,
+    positions,
+    profiles,
     filteredItems: filteredItems.data ?? [],
     filteredMeta: filteredItems.meta ?? null,
   });
@@ -1244,6 +1432,183 @@ const bindSkinAdvisor = () => {
   });
 };
 
+const resetPositionForm = () => {
+  const form = document.getElementById("position-form");
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+
+  form.reset();
+  const buyDate = document.getElementById("position-buy-date");
+  if (buyDate instanceof HTMLInputElement) {
+    buyDate.value = new Date().toISOString().slice(0, 10);
+  }
+};
+
+const bindPositionForm = () => {
+  const form = document.getElementById("position-form");
+  const feedback = document.getElementById("position-feedback");
+  if (form instanceof HTMLFormElement) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!state.item?.id) {
+        if (feedback) {
+          feedback.textContent = "Ouvre d abord une fiche item pour ajouter une position.";
+        }
+        return;
+      }
+
+      const payload = {
+        item_id: state.item.id,
+        profile_id: document.getElementById("position-profile")?.value?.trim() ?? "",
+        buy_price_eur: document.getElementById("position-buy-price")?.value?.trim() ?? "",
+        buy_date: document.getElementById("position-buy-date")?.value?.trim() ?? "",
+        buy_float: document.getElementById("position-buy-float")?.value?.trim() ?? "",
+        target_price_eur: document.getElementById("position-target-price")?.value?.trim() ?? "",
+        take_profit_pct: document.getElementById("position-take-profit")?.value?.trim() ?? "",
+        stop_loss_pct: document.getElementById("position-stop-loss")?.value?.trim() ?? "",
+        note: document.getElementById("position-note")?.value?.trim() ?? "",
+      };
+
+      try {
+        if (feedback) {
+          feedback.textContent = "Enregistrement de la position...";
+        }
+        const result = await fetchJson("/api/positions", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        resetPositionForm();
+        await loadData();
+        renderAll();
+        if (feedback) {
+          feedback.textContent = result.message ?? "Position enregistree.";
+        }
+      } catch (error) {
+        if (feedback) {
+          feedback.textContent = error.message;
+        }
+      }
+    });
+  }
+
+  document.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const button = target.closest("[data-delete-position]");
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+
+    const positionId = button.dataset.deletePosition;
+    if (!positionId) {
+      return;
+    }
+
+    event.preventDefault();
+
+    try {
+      if (feedback) {
+        feedback.textContent = "Suppression de la position...";
+      }
+      await fetchJson(`/api/positions/${encodeURIComponent(positionId)}`, {
+        method: "DELETE",
+      });
+      await loadData();
+      renderAll();
+      if (feedback) {
+        feedback.textContent = "Position supprimee.";
+      }
+    } catch (error) {
+      if (feedback) {
+        feedback.textContent = error.message;
+      }
+    }
+  });
+};
+
+const bindProfileForm = () => {
+  const form = document.getElementById("profile-form");
+  const feedback = document.getElementById("profile-feedback");
+  if (form instanceof HTMLFormElement) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const payload = {
+        name: document.getElementById("profile-name")?.value?.trim() ?? "",
+        strategy: document.getElementById("profile-strategy")?.value?.trim() ?? "",
+        steam_profile_url: document.getElementById("profile-steam-url")?.value?.trim() ?? "",
+        discord_webhook_url: document.getElementById("profile-discord-url")?.value?.trim() ?? "",
+        note: document.getElementById("profile-note")?.value?.trim() ?? "",
+      };
+
+      try {
+        if (feedback) {
+          feedback.textContent = "Creation du profil...";
+        }
+        const result = await fetchJson("/api/profiles", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        form.reset();
+        const strategy = document.getElementById("profile-strategy");
+        if (strategy instanceof HTMLInputElement) {
+          strategy.value = "balanced";
+        }
+        await loadData();
+        renderAll();
+        if (feedback) {
+          feedback.textContent = result.message ?? "Profil cree.";
+        }
+      } catch (error) {
+        if (feedback) {
+          feedback.textContent = error.message;
+        }
+      }
+    });
+  }
+
+  document.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const button = target.closest("[data-delete-profile]");
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+
+    const profileId = button.dataset.deleteProfile;
+    if (!profileId) {
+      return;
+    }
+
+    event.preventDefault();
+
+    try {
+      if (feedback) {
+        feedback.textContent = "Suppression du profil...";
+      }
+      await fetchJson(`/api/profiles/${encodeURIComponent(profileId)}`, {
+        method: "DELETE",
+      });
+      await loadData();
+      renderAll();
+      if (feedback) {
+        feedback.textContent = "Profil supprime. Les positions sont repassees en portefeuille libre.";
+      }
+    } catch (error) {
+      if (feedback) {
+        feedback.textContent = error.message;
+      }
+    }
+  });
+};
+
 const bindAdminActions = () => {
   document.querySelectorAll("[data-job]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1287,6 +1652,8 @@ const init = async () => {
   bindItemOpenActions();
   bindFilterPanel();
   bindSkinAdvisor();
+  bindPositionForm();
+  bindProfileForm();
 
   try {
     await loadData();

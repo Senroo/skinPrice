@@ -33,7 +33,8 @@ body {
 }
 
 button,
-input { font: inherit; }
+input,
+select { font: inherit; }
 
 button { border: 0; }
 
@@ -303,6 +304,16 @@ button { border: 0; }
   background: rgba(182, 77, 47, 0.14);
 }
 
+.item-link-danger {
+  color: var(--red);
+  border-color: rgba(182, 61, 53, 0.18);
+  background: rgba(182, 61, 53, 0.08);
+}
+
+.item-link-danger:hover {
+  background: rgba(182, 61, 53, 0.14);
+}
+
 .item-name-link {
   display: inline;
   width: fit-content;
@@ -479,10 +490,20 @@ button { border: 0; }
 }
 
 .filter-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.position-form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .filter-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.position-note {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(182, 77, 47, 0.08);
+  border: 1px solid rgba(182, 77, 47, 0.12);
+  color: var(--muted);
 }
 
 .filtered-item {
@@ -494,6 +515,8 @@ button { border: 0; }
 }
 .field { display: grid; gap: 8px; }
 .field input {
+.field input,
+.field select {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--line);
@@ -601,6 +624,21 @@ button { border: 0; }
   color: var(--accent);
 }
 
+.badge-position-sell {
+  background: rgba(45, 122, 76, 0.14);
+  color: var(--green);
+}
+
+.badge-position-watch {
+  background: rgba(165, 109, 17, 0.16);
+  color: var(--amber);
+}
+
+.badge-position-hold {
+  background: rgba(53, 36, 25, 0.08);
+  color: var(--muted);
+}
+
 .ai-section .value-stack {
   display: flex;
   flex-wrap: wrap;
@@ -650,6 +688,7 @@ button { border: 0; }
   .summary-panel,
   .item-hero,
   .triple-grid { grid-template-columns: 1fr; }
+  .position-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 920px) {
@@ -670,6 +709,7 @@ button { border: 0; }
   .opportunity-top,
   .table-item { grid-template-columns: 1fr; }
   .filter-grid,
+  .position-form-grid,
   .kpi-grid { grid-template-columns: 1fr; }
   .value-stack,
   .signal-score { text-align: left; }

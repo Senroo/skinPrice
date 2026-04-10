@@ -66,6 +66,36 @@ final class Application
                 return;
             }
 
+            if ($method === 'GET' && $path === '/api/positions') {
+                JsonResponse::send($this->publicController()->positions());
+                return;
+            }
+
+            if ($method === 'GET' && $path === '/api/profiles') {
+                JsonResponse::send($this->publicController()->profiles());
+                return;
+            }
+
+            if ($method === 'POST' && $path === '/api/profiles') {
+                JsonResponse::send($this->publicController()->saveProfile($this->readJsonBody()));
+                return;
+            }
+
+            if ($method === 'DELETE' && preg_match('#^/api/profiles/(?P<id>[^/]+)$#', $path, $matches) === 1) {
+                JsonResponse::send($this->publicController()->deleteProfile((string) $matches['id']));
+                return;
+            }
+
+            if ($method === 'POST' && $path === '/api/positions') {
+                JsonResponse::send($this->publicController()->savePosition($this->readJsonBody()));
+                return;
+            }
+
+            if ($method === 'DELETE' && preg_match('#^/api/positions/(?P<id>[^/]+)$#', $path, $matches) === 1) {
+                JsonResponse::send($this->publicController()->deletePosition((string) $matches['id']));
+                return;
+            }
+
             if ($method === 'POST' && $path === '/api/assistant/skin-advice') {
                 JsonResponse::send($this->publicController()->skinAdvice($this->readJsonBody()));
                 return;

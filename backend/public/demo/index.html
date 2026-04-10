@@ -133,6 +133,60 @@
             </article>
           </div>
 
+          <div class="dashboard-layout">
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4>Positions / mise a la vente</h4>
+                  <p>Suivi achat, PnL, float d origine et signal de sortie. La float reste fixe dans CS2.</p>
+                </div>
+                <div class="chip-row">
+                  <span class="pill" id="positions-open-pill">0 positions</span>
+                  <span class="pill pill-outline" id="positions-ready-pill">0 a vendre</span>
+                </div>
+              </div>
+              <div class="table-list" id="positions-table"></div>
+            </article>
+          </div>
+
+          <div class="dashboard-layout">
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4>Profils portefeuille</h4>
+                  <p>Chaque profil peut recevoir ses positions et une lecture quotidienne keep / watch / sell.</p>
+                </div>
+                <div class="chip-row">
+                  <span class="pill" id="profiles-total-pill">0 profil</span>
+                  <span class="pill pill-outline" id="profiles-review-pill">0 a revoir</span>
+                </div>
+              </div>
+              <div class="table-list" id="profiles-table"></div>
+            </article>
+
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4>Nouveau profil</h4>
+                  <p>Ajoute un portefeuille, puis rattache-y tes skins suivis.</p>
+                </div>
+              </div>
+              <form class="filter-panel" id="profile-form">
+                <div class="filter-grid">
+                  <label class="field"><span>Nom du profil</span><input id="profile-name" name="name" placeholder="Portefeuille main" /></label>
+                  <label class="field"><span>Strategie</span><input id="profile-strategy" name="strategy" placeholder="balanced / safe / swing" value="balanced" /></label>
+                  <label class="field"><span>Lien inventaire / Steam</span><input id="profile-steam-url" name="steam_profile_url" placeholder="https://steamcommunity.com/..." /></label>
+                  <label class="field"><span>Webhook Discord perso</span><input id="profile-discord-url" name="discord_webhook_url" placeholder="https://discord.com/api/webhooks/..." /></label>
+                </div>
+                <label class="field"><span>Note</span><input id="profile-note" name="note" placeholder="ex: portefeuille long terme knives / redlines" /></label>
+                <div class="filter-actions">
+                  <button class="action-button" type="submit">Creer le profil</button>
+                </div>
+              </form>
+              <p class="table-meta" id="profile-feedback">Cree un profil, puis rattache-lui tes positions depuis la fiche item.</p>
+            </article>
+          </div>
+
           <div class="section-block">
             <article class="panel">
               <div class="card-header">
@@ -264,6 +318,30 @@
                   nettement. C’est un profil intéressant pour une watchlist, pas un chase brutal.
                 </p>
               </div>
+            </article>
+
+            <article class="panel">
+              <div class="card-header"><div><h4>Position / sortie</h4><p>Enregistre ton achat pour suivre la plus-value et voir si le marche indique vendre, garder ou surveiller.</p></div></div>
+              <div class="position-note">
+                La float ne s use pas dans CS2. On garde la float d achat comme memo qualitatif, puis on decide surtout avec prix, liquidite et objectif de sortie.
+              </div>
+              <form class="filter-panel" id="position-form">
+                <div class="filter-grid position-form-grid">
+                  <label class="field"><span>Profil portefeuille</span><select id="position-profile" name="profile_id"><option value="">Portefeuille libre</option></select></label>
+                  <label class="field"><span>Prix d achat (EUR)</span><input id="position-buy-price" name="buy_price_eur" inputmode="decimal" placeholder="400" /></label>
+                  <label class="field"><span>Date d achat</span><input id="position-buy-date" name="buy_date" type="date" /></label>
+                  <label class="field"><span>Float a l achat</span><input id="position-buy-float" name="buy_float" inputmode="decimal" placeholder="0.0100" /></label>
+                  <label class="field"><span>Objectif de vente (EUR)</span><input id="position-target-price" name="target_price_eur" inputmode="decimal" placeholder="470" /></label>
+                  <label class="field"><span>Take profit %</span><input id="position-take-profit" name="take_profit_pct" inputmode="decimal" placeholder="15" /></label>
+                  <label class="field"><span>Stop loss %</span><input id="position-stop-loss" name="stop_loss_pct" inputmode="decimal" placeholder="8" /></label>
+                </div>
+                <label class="field"><span>Note perso</span><input id="position-note" name="note" placeholder="ex: vente si momentum se tasse" /></label>
+                <div class="filter-actions">
+                  <button class="action-button" type="submit">Ajouter au suivi vente</button>
+                </div>
+              </form>
+              <p class="table-meta" id="position-feedback">Renseigne ton achat pour calculer un vrai signal de sortie sur cet item.</p>
+              <div class="table-list" id="item-positions"></div>
             </article>
 
             <article class="panel">

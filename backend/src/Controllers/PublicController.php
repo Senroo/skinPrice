@@ -43,6 +43,36 @@ final class PublicController
         return $this->radarService->watchlist();
     }
 
+    public function positions(): array
+    {
+        return $this->radarService->positions();
+    }
+
+    public function profiles(): array
+    {
+        return $this->radarService->profiles();
+    }
+
+    public function saveProfile(array $payload): array
+    {
+        return $this->radarService->saveProfile($payload);
+    }
+
+    public function deleteProfile(string $profileId): array
+    {
+        return $this->radarService->deleteProfile($profileId);
+    }
+
+    public function savePosition(array $payload): array
+    {
+        return $this->radarService->savePosition($payload);
+    }
+
+    public function deletePosition(string $positionId): array
+    {
+        return $this->radarService->deletePosition($positionId);
+    }
+
     public function skinAdvice(array $payload): array
     {
         return $this->radarService->skinAdvice($payload);

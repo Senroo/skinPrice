@@ -23,6 +23,8 @@ final class RadarService
     private string $reportsFile;
     private string $jobsFile;
     private string $watchlistFile;
+    private string $positionsFile;
+    private string $profilesFile;
     private string $stateFile;
 
     public function __construct()
@@ -38,10 +40,14 @@ final class RadarService
         $this->reportsFile = $this->storageDir . '/reports.json';
         $this->jobsFile = $this->storageDir . '/jobs.json';
         $this->watchlistFile = $this->storageDir . '/watchlist.json';
+        $this->positionsFile = $this->storageDir . '/positions.json';
+        $this->profilesFile = $this->storageDir . '/profiles.json';
         $this->stateFile = $this->storageDir . '/radar_state.json';
 
         $this->ensureDirectories();
         $this->ensureWatchlist();
+        $this->ensurePositions();
+        $this->ensureProfiles();
     }
 
     private function detectStoragePath(): string
@@ -64,6 +70,9 @@ final class RadarService
         $market = $this->readMarketData();
         $report = $this->getLatestReport();
         $items = $market['items'] ?? [];
+        $positions = $this->positions();
+        $openPositions = $positions['data'] ?? [];
+        $positionsMeta = $positions['meta'] ?? [];
 
         return [
             'date' => $market['date'] ?? ($report['date'] ?? date('Y-m-d')),
@@ -71,6 +80,9 @@ final class RadarService
             'items_in_range' => $report['items_in_range'] ?? count($items),
             'opportunities_count' => max((int) ($report['opportunities_count'] ?? 0), count(array_filter($items, fn (array $item): bool => $this->isOpportunity($item)))),
             'watchlist_moving_count' => isset($report['watchlist_moves']) ? count($report['watchlist_moves']) : count($this->watchlistMoves($items)),
+            'positions_open_count' => $positionsMeta['total'] ?? count($openPositions),
+            'positions_ready_to_sell_count' => $positionsMeta['ready_to_sell'] ?? 0,
+            'top_positions' => array_slice($openPositions, 0, 4),
             'top_signals' => array_slice($items, 0, 5),
             'opportunity_series' => $this->buildOpportunitySeries(),
             'job_status' => [
@@ -182,6 +194,10 @@ final class RadarService
                 ],
                 'history' => $this->buildItemHistory((string) $item['market_hash_name']),
                 'recent_listing_signals' => $this->getRecentListingSignals((string) $item['market_hash_name']),
+                'positions' => array_values(array_filter(
+                    $this->positions()['data'] ?? [],
+                    static fn (array $position): bool => (int) ($position['item_id'] ?? 0) === (int) $item['id']
+                )),
                 'explanation' => $this->buildItemExplanation($item),
             ];
         }
@@ -283,6 +299,285 @@ final class RadarService
         }
 
         return ['data' => $data];
+    }
+
+    public function positions(): array
+    {
+        $marketIndex = [];
+        foreach (($this->readMarketData()['items'] ?? []) as $item) {
+            $marketIndex[(int) ($item['id'] ?? 0)] = $item;
+        }
+
+        $profileNames = [];
+        foreach ($this->readProfileEntries() as $profile) {
+            $profileNames[(string) $profile['profile_id']] = (string) $profile['name'];
+        }
+
+        $positions = array_map(
+            fn (array $entry): array => $this->enrichPositionEntry($entry, $marketIndex, $profileNames),
+            $this->readPositionEntries()
+        );
+
+        usort($positions, static function (array $left, array $right): int {
+            $priorityCompare = (int) ($right['sell_priority'] ?? 0) <=> (int) ($left['sell_priority'] ?? 0);
+            if ($priorityCompare !== 0) {
+                return $priorityCompare;
+            }
+
+            $pnlCompare = ((float) ($right['pnl_pct'] ?? -INF)) <=> ((float) ($left['pnl_pct'] ?? -INF));
+            if ($pnlCompare !== 0) {
+                return $pnlCompare;
+            }
+
+            return strcmp((string) ($right['updated_at'] ?? ''), (string) ($left['updated_at'] ?? ''));
+        });
+
+        return [
+            'data' => $positions,
+            'meta' => [
+                'total' => count($positions),
+                'ready_to_sell' => count(array_filter($positions, static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'sell_now')),
+                'watch_to_sell' => count(array_filter($positions, static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'watch_sell')),
+                'hold' => count(array_filter($positions, static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'hold')),
+            ],
+        ];
+    }
+
+    public function profiles(): array
+    {
+        $profiles = $this->readProfileEntries();
+        $positions = $this->positions()['data'] ?? [];
+        $profilesData = [];
+
+        foreach ($profiles as $profile) {
+            $profilePositions = array_values(array_filter(
+                $positions,
+                static fn (array $position): bool => ($position['profile_id'] ?? null) === ($profile['profile_id'] ?? null)
+            ));
+            $profilesData[] = $this->buildProfilePortfolio($profile, $profilePositions);
+        }
+
+        usort($profilesData, static function (array $left, array $right): int {
+            $urgentCompare = (int) ($right['ready_to_sell_count'] ?? 0) <=> (int) ($left['ready_to_sell_count'] ?? 0);
+            if ($urgentCompare !== 0) {
+                return $urgentCompare;
+            }
+
+            return strcmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? ''));
+        });
+
+        return [
+            'data' => $profilesData,
+            'meta' => [
+                'total' => count($profilesData),
+                'positions_count' => count($positions),
+                'profiles_ready_to_review' => count(array_filter($profilesData, static fn (array $profile): bool => ($profile['ready_to_sell_count'] ?? 0) > 0)),
+            ],
+        ];
+    }
+
+    public function saveProfile(array $payload): array
+    {
+        $name = trim((string) ($payload['name'] ?? ''));
+        if ($name === '') {
+            throw new RuntimeException('Le nom du profil est obligatoire.');
+        }
+
+        $strategy = trim((string) ($payload['strategy'] ?? 'balanced'));
+        if ($strategy === '') {
+            $strategy = 'balanced';
+        }
+
+        $steamProfileUrl = $this->normalizeOptionalUrl($payload['steam_profile_url'] ?? null);
+        $discordWebhookUrl = $this->normalizeOptionalUrl($payload['discord_webhook_url'] ?? null);
+        $note = trim((string) ($payload['note'] ?? ''));
+        $profileId = trim((string) ($payload['profile_id'] ?? ''));
+
+        $entries = $this->readProfileEntries();
+        $index = null;
+        foreach ($entries as $entryIndex => $entry) {
+            if ($profileId !== '' && ($entry['profile_id'] ?? null) === $profileId) {
+                $index = $entryIndex;
+                break;
+            }
+        }
+
+        $now = date(DATE_ATOM);
+        $existing = $index !== null ? $entries[$index] : null;
+        $entry = [
+            'profile_id' => $existing['profile_id'] ?? uniqid('prof_', false),
+            'name' => $name,
+            'strategy' => $strategy,
+            'steam_profile_url' => $steamProfileUrl,
+            'discord_webhook_url' => $discordWebhookUrl,
+            'note' => $note !== '' ? $note : null,
+            'is_active' => true,
+            'created_at' => $existing['created_at'] ?? $now,
+            'updated_at' => $now,
+        ];
+
+        if ($index !== null) {
+            $entries[$index] = $entry;
+        } else {
+            array_unshift($entries, $entry);
+        }
+
+        $this->writeProfileEntries($entries);
+
+        $profile = null;
+        foreach ($this->profiles()['data'] as $candidate) {
+            if (($candidate['profile_id'] ?? null) === $entry['profile_id']) {
+                $profile = $candidate;
+                break;
+            }
+        }
+
+        return [
+            'status' => 'success',
+            'message' => 'Profil portefeuille enregistre.',
+            'profile' => $profile,
+        ];
+    }
+
+    public function deleteProfile(string $profileId): array
+    {
+        $profileId = trim($profileId);
+        if ($profileId === '') {
+            throw new RuntimeException('Profil introuvable.');
+        }
+
+        $entries = $this->readProfileEntries();
+        $filtered = array_values(array_filter(
+            $entries,
+            static fn (array $entry): bool => ($entry['profile_id'] ?? '') !== $profileId
+        ));
+
+        if (count($filtered) === count($entries)) {
+            throw new RuntimeException('Profil introuvable.');
+        }
+
+        $this->writeProfileEntries($filtered);
+
+        $positions = $this->readPositionEntries();
+        foreach ($positions as &$position) {
+            if (($position['profile_id'] ?? null) === $profileId) {
+                $position['profile_id'] = null;
+            }
+        }
+        unset($position);
+        $this->writePositionEntries($positions);
+
+        return [
+            'status' => 'success',
+            'message' => 'Profil supprime. Les positions restent en portefeuille libre.',
+            'profile_id' => $profileId,
+        ];
+    }
+
+    public function savePosition(array $payload): array
+    {
+        $itemId = (int) ($payload['item_id'] ?? 0);
+        if ($itemId <= 0) {
+            throw new RuntimeException('Choisis un item avant d enregistrer une position.');
+        }
+
+        $marketItem = $this->findMarketItemById($itemId);
+        if ($marketItem === null) {
+            throw new RuntimeException('Item introuvable dans le marche live.');
+        }
+
+        $buyPrice = $this->parsePositiveFloat($payload['buy_price_eur'] ?? null, 'Le prix d achat doit etre superieur a 0.');
+        $buyDate = $this->normalizeDateInput((string) ($payload['buy_date'] ?? date('Y-m-d')));
+        $buyFloat = $this->parseOptionalFloat($payload['buy_float'] ?? null);
+        if ($buyFloat !== null && ($buyFloat < 0 || $buyFloat > 1)) {
+            throw new RuntimeException('La float doit etre comprise entre 0.0000 et 1.0000.');
+        }
+
+        $targetPrice = $this->parseOptionalPositiveFloat($payload['target_price_eur'] ?? null);
+        $takeProfit = $this->parseOptionalPositiveFloat($payload['take_profit_pct'] ?? null);
+        $stopLoss = $this->parseOptionalPositiveFloat($payload['stop_loss_pct'] ?? null);
+        $profileId = $this->normalizeOptionalProfileId($payload['profile_id'] ?? null);
+        $note = trim((string) ($payload['note'] ?? ''));
+        $noteLength = function_exists('mb_strlen') ? mb_strlen($note) : strlen($note);
+        if ($noteLength > 240) {
+            $note = function_exists('mb_substr') ? mb_substr($note, 0, 240) : substr($note, 0, 240);
+        }
+
+        $positionId = trim((string) ($payload['position_id'] ?? ''));
+        $entries = $this->readPositionEntries();
+        $index = null;
+        foreach ($entries as $entryIndex => $entry) {
+            if (($entry['position_id'] ?? null) === $positionId && $positionId !== '') {
+                $index = $entryIndex;
+                break;
+            }
+        }
+
+        $now = date(DATE_ATOM);
+        $existing = $index !== null ? $entries[$index] : null;
+        $entry = [
+            'position_id' => $existing['position_id'] ?? uniqid('pos_', false),
+            'item_id' => $itemId,
+            'market_hash_name' => (string) ($marketItem['market_hash_name'] ?? $marketItem['name'] ?? ''),
+            'buy_price_eur' => $buyPrice,
+            'buy_date' => $buyDate,
+            'buy_float' => $buyFloat,
+            'target_price_eur' => $targetPrice,
+            'take_profit_pct' => $takeProfit,
+            'stop_loss_pct' => $stopLoss,
+            'profile_id' => $profileId,
+            'note' => $note !== '' ? $note : null,
+            'created_at' => $existing['created_at'] ?? $now,
+            'updated_at' => $now,
+        ];
+
+        if ($index !== null) {
+            $entries[$index] = $entry;
+        } else {
+            array_unshift($entries, $entry);
+        }
+
+        $this->writePositionEntries($entries);
+
+        $position = null;
+        foreach ($this->positions()['data'] as $candidate) {
+            if (($candidate['position_id'] ?? null) === $entry['position_id']) {
+                $position = $candidate;
+                break;
+            }
+        }
+
+        return [
+            'status' => 'success',
+            'message' => 'Position enregistree. Le signal de vente est calcule a partir du marche live, pas d une usure de float.',
+            'position' => $position,
+        ];
+    }
+
+    public function deletePosition(string $positionId): array
+    {
+        $positionId = trim($positionId);
+        if ($positionId === '') {
+            throw new RuntimeException('Position introuvable.');
+        }
+
+        $entries = $this->readPositionEntries();
+        $filtered = array_values(array_filter(
+            $entries,
+            static fn (array $entry): bool => ($entry['position_id'] ?? '') !== $positionId
+        ));
+
+        if (count($filtered) === count($entries)) {
+            throw new RuntimeException('Position introuvable.');
+        }
+
+        $this->writePositionEntries($filtered);
+
+        return [
+            'status' => 'success',
+            'message' => 'Position supprimee.',
+            'position_id' => $positionId,
+        ];
     }
 
     public function health(): array
@@ -804,6 +1099,37 @@ final class RadarService
         ]);
     }
 
+    private function ensurePositions(): void
+    {
+        if (is_file($this->positionsFile)) {
+            return;
+        }
+
+        $this->writeJson($this->positionsFile, []);
+    }
+
+    private function ensureProfiles(): void
+    {
+        if (is_file($this->profilesFile)) {
+            return;
+        }
+
+        $now = date(DATE_ATOM);
+        $this->writeJson($this->profilesFile, [
+            [
+                'profile_id' => 'prof_demo_main',
+                'name' => 'Portefeuille principal',
+                'strategy' => 'balanced',
+                'steam_profile_url' => null,
+                'discord_webhook_url' => null,
+                'note' => 'Profil demo pour suivre les meilleures sorties.',
+                'is_active' => true,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+        ]);
+    }
+
     private function seedWatchlistEntry(string $marketHashName, string $note): array
     {
         $now = date(DATE_ATOM);
@@ -889,6 +1215,472 @@ final class RadarService
     private function writeWatchlistEntries(array $entries): void
     {
         $this->writeJson($this->watchlistFile, array_values($entries));
+    }
+
+    private function readPositionEntries(): array
+    {
+        $entries = $this->readJson($this->positionsFile, []);
+        $normalized = [];
+
+        foreach ($entries as $entry) {
+            try {
+                $candidate = $this->normalizePositionEntry($entry);
+            } catch (\Throwable) {
+                $candidate = null;
+            }
+
+            if ($candidate === null) {
+                continue;
+            }
+
+            $normalized[$candidate['position_id']] = $candidate;
+        }
+
+        return array_values($normalized);
+    }
+
+    private function normalizePositionEntry(mixed $entry): ?array
+    {
+        if (!is_array($entry)) {
+            return null;
+        }
+
+        $itemId = (int) ($entry['item_id'] ?? 0);
+        $marketHashName = trim((string) ($entry['market_hash_name'] ?? $entry['name'] ?? ''));
+        if ($itemId <= 0 || $marketHashName === '') {
+            return null;
+        }
+
+        $buyPrice = isset($entry['buy_price_eur']) ? (float) $entry['buy_price_eur'] : null;
+        if ($buyPrice === null || $buyPrice <= 0) {
+            return null;
+        }
+
+        $now = date(DATE_ATOM);
+
+        return [
+            'position_id' => trim((string) ($entry['position_id'] ?? uniqid('pos_', false))),
+            'item_id' => $itemId,
+            'market_hash_name' => $marketHashName,
+            'buy_price_eur' => round($buyPrice, 2),
+            'buy_date' => $this->normalizeDateInput((string) ($entry['buy_date'] ?? date('Y-m-d'))),
+            'buy_float' => $this->parseOptionalFloat($entry['buy_float'] ?? null),
+            'target_price_eur' => $this->parseOptionalPositiveFloat($entry['target_price_eur'] ?? null),
+            'take_profit_pct' => $this->parseOptionalPositiveFloat($entry['take_profit_pct'] ?? null),
+            'stop_loss_pct' => $this->parseOptionalPositiveFloat($entry['stop_loss_pct'] ?? null),
+            'profile_id' => $this->normalizeOptionalProfileId($entry['profile_id'] ?? null),
+            'note' => ($note = trim((string) ($entry['note'] ?? ''))) !== '' ? $note : null,
+            'created_at' => (string) ($entry['created_at'] ?? $now),
+            'updated_at' => (string) ($entry['updated_at'] ?? $entry['created_at'] ?? $now),
+        ];
+    }
+
+    private function writePositionEntries(array $entries): void
+    {
+        $this->writeJson($this->positionsFile, array_values($entries));
+    }
+
+    private function readProfileEntries(): array
+    {
+        $entries = $this->readJson($this->profilesFile, []);
+        $normalized = [];
+
+        foreach ($entries as $entry) {
+            $candidate = $this->normalizeProfileEntry($entry);
+            if ($candidate === null) {
+                continue;
+            }
+
+            $normalized[$candidate['profile_id']] = $candidate;
+        }
+
+        return array_values($normalized);
+    }
+
+    private function normalizeProfileEntry(mixed $entry): ?array
+    {
+        if (!is_array($entry)) {
+            return null;
+        }
+
+        $name = trim((string) ($entry['name'] ?? ''));
+        if ($name === '') {
+            return null;
+        }
+
+        $now = date(DATE_ATOM);
+
+        return [
+            'profile_id' => trim((string) ($entry['profile_id'] ?? uniqid('prof_', false))),
+            'name' => $name,
+            'strategy' => trim((string) ($entry['strategy'] ?? 'balanced')) ?: 'balanced',
+            'steam_profile_url' => $this->normalizeOptionalUrl($entry['steam_profile_url'] ?? null),
+            'discord_webhook_url' => $this->normalizeOptionalUrl($entry['discord_webhook_url'] ?? null),
+            'note' => ($note = trim((string) ($entry['note'] ?? ''))) !== '' ? $note : null,
+            'is_active' => isset($entry['is_active']) ? (bool) $entry['is_active'] : true,
+            'created_at' => (string) ($entry['created_at'] ?? $now),
+            'updated_at' => (string) ($entry['updated_at'] ?? $entry['created_at'] ?? $now),
+        ];
+    }
+
+    private function writeProfileEntries(array $entries): void
+    {
+        $this->writeJson($this->profilesFile, array_values($entries));
+    }
+
+    private function enrichPositionEntry(array $entry, array $marketIndex, array $profileNames = []): array
+    {
+        $item = $marketIndex[(int) ($entry['item_id'] ?? 0)] ?? null;
+        $currentPrice = isset($item['current_price']) ? (float) $item['current_price'] : null;
+        $buyPrice = (float) ($entry['buy_price_eur'] ?? 0.0);
+        $pnlValue = ($currentPrice !== null && $buyPrice > 0)
+            ? round($currentPrice - $buyPrice, 2)
+            : null;
+        $pnlPct = ($currentPrice !== null && $buyPrice > 0)
+            ? round((($currentPrice - $buyPrice) / $buyPrice) * 100, 2)
+            : null;
+        $targetPrice = isset($entry['target_price_eur']) ? (float) $entry['target_price_eur'] : null;
+        $targetDelta = ($currentPrice !== null && $targetPrice !== null && $targetPrice > 0)
+            ? round((($currentPrice - $targetPrice) / $targetPrice) * 100, 2)
+            : null;
+        $floatValue = isset($entry['buy_float']) && is_numeric($entry['buy_float']) ? (float) $entry['buy_float'] : null;
+        $floatWear = $this->wearLabelFromFloat($floatValue);
+        $signal = $this->buildSellSignal($entry, $item, $pnlPct, $currentPrice);
+
+        return [
+            'position_id' => $entry['position_id'],
+            'id' => $item['id'] ?? (int) $entry['item_id'],
+            'item_id' => (int) $entry['item_id'],
+            'market_hash_name' => $entry['market_hash_name'],
+            'name' => $item['name'] ?? $entry['market_hash_name'],
+            'weapon' => $item['weapon'] ?? null,
+            'rarity' => $item['rarity'] ?? null,
+            'image_url' => $item['image_url'] ?? null,
+            'item_page' => $item['item_page'] ?? null,
+            'market_page' => $item['market_page'] ?? null,
+            'buy_price_eur' => $buyPrice,
+            'buy_date' => $entry['buy_date'],
+            'days_held' => $this->daysSince($entry['buy_date']),
+            'buy_float' => $floatValue,
+            'buy_float_wear' => $floatWear,
+            'profile_id' => $entry['profile_id'] ?? null,
+            'profile_name' => isset($entry['profile_id']) ? ($profileNames[(string) $entry['profile_id']] ?? 'Profil supprime') : null,
+            'float_note' => $floatValue !== null
+                ? sprintf('Float %.4f (%s) fixe: la float ne bouge pas avec les games dans CS2.', $floatValue, $floatWear ?? 'wear inconnu')
+                : 'La float est fixe dans CS2. On suit donc surtout prix, liquidite et objectif de sortie.',
+            'target_price_eur' => $targetPrice,
+            'take_profit_pct' => isset($entry['take_profit_pct']) ? (float) $entry['take_profit_pct'] : null,
+            'stop_loss_pct' => isset($entry['stop_loss_pct']) ? (float) $entry['stop_loss_pct'] : null,
+            'target_gap_pct' => $targetDelta,
+            'current_price_eur' => $currentPrice,
+            'pnl_eur' => $pnlValue,
+            'pnl_pct' => $pnlPct,
+            'interest_score' => $item['interest_score'] ?? null,
+            'change_vs_yesterday_pct' => $item['change_vs_yesterday_pct'] ?? null,
+            'change_vs_7d_pct' => $item['change_vs_7d_pct'] ?? null,
+            'sales_24h_volume' => $item['sales_24h_volume'] ?? null,
+            'volume_ratio_24h_7d' => $item['volume_ratio_24h_7d'] ?? null,
+            'note' => $entry['note'] ?? null,
+            'sell_signal' => $signal['key'],
+            'sell_label' => $signal['label'],
+            'sell_priority' => $signal['priority'],
+            'sell_reasons' => $signal['reasons'],
+            'primary_reason' => $signal['reasons'][0] ?? 'Pas de fenetre de vente prioritaire pour l instant.',
+            'created_at' => $entry['created_at'],
+            'updated_at' => $entry['updated_at'],
+        ];
+    }
+
+    private function buildSellSignal(array $entry, ?array $item, ?float $pnlPct, ?float $currentPrice): array
+    {
+        $change24 = isset($item['change_vs_yesterday_pct']) ? (float) $item['change_vs_yesterday_pct'] : null;
+        $change7 = isset($item['change_vs_7d_pct']) ? (float) $item['change_vs_7d_pct'] : null;
+        $volume24 = (int) ($item['sales_24h_volume'] ?? 0);
+        $volumeRatio = isset($item['volume_ratio_24h_7d']) ? (float) $item['volume_ratio_24h_7d'] : null;
+        $score = (int) ($item['interest_score'] ?? 0);
+        $targetPrice = isset($entry['target_price_eur']) ? (float) $entry['target_price_eur'] : null;
+        $takeProfit = isset($entry['take_profit_pct']) ? (float) $entry['take_profit_pct'] : null;
+        $stopLoss = isset($entry['stop_loss_pct']) ? (float) $entry['stop_loss_pct'] : null;
+        $floatValue = isset($entry['buy_float']) && is_numeric($entry['buy_float']) ? (float) $entry['buy_float'] : null;
+        $reasons = [];
+        $key = 'hold';
+        $label = 'Garder';
+        $priority = 35;
+
+        if ($currentPrice === null || $currentPrice <= 0) {
+            return [
+                'key' => 'watch_sell',
+                'label' => 'Surveiller',
+                'priority' => 55,
+                'reasons' => ['Prix live indisponible: impossible de valider un point de sortie fiable.'],
+            ];
+        }
+
+        if ($targetPrice !== null && $currentPrice >= $targetPrice) {
+            $key = 'sell_now';
+            $label = 'Vendre';
+            $priority = 100;
+            $reasons[] = 'Objectif de prix atteint sur le marche live.';
+        } elseif ($stopLoss !== null && $pnlPct !== null && $pnlPct <= -abs($stopLoss)) {
+            $key = 'sell_now';
+            $label = 'Couper';
+            $priority = 92;
+            $reasons[] = 'Stop loss touche: le risque de poursuite baissiere augmente.';
+        } elseif ($takeProfit !== null && $pnlPct !== null && $pnlPct >= $takeProfit && (($change24 ?? 0.0) <= -3.0 || ($volumeRatio !== null && $volumeRatio < 0.9))) {
+            $key = 'sell_now';
+            $label = 'Vendre';
+            $priority = 88;
+            $reasons[] = 'Take profit atteint avec un momentum qui commence a ralentir.';
+        } elseif ($pnlPct !== null && $pnlPct >= max(8.0, ($takeProfit ?? 12.0) * 0.65) && ($change24 ?? 0.0) < 0.0) {
+            $key = 'watch_sell';
+            $label = 'Surveiller';
+            $priority = 72;
+            $reasons[] = 'La position est verte mais le 24h se retourne: fenetre de vente a surveiller.';
+        } elseif ($volume24 <= 1 && abs($change24 ?? 0.0) >= 12.0) {
+            $key = 'watch_sell';
+            $label = 'Surveiller';
+            $priority = 66;
+            $reasons[] = 'Variation brutale sur faible volume: attention au faux signal de sortie.';
+        } elseif ($score < 45 && $pnlPct !== null && $pnlPct > 0) {
+            $key = 'watch_sell';
+            $label = 'Surveiller';
+            $priority = 61;
+            $reasons[] = 'Le marche reste peu propre pour conserver longtemps cette plus-value.';
+        } else {
+            $reasons[] = 'Pas de signal de vente prioritaire: la position peut continuer a respirer.';
+        }
+
+        if ($targetPrice !== null && $currentPrice < $targetPrice) {
+            $reasons[] = sprintf('Encore %.2f EUR avant l objectif de sortie.', $targetPrice - $currentPrice);
+        }
+
+        if ($change7 !== null && $change7 < -8.0) {
+            $reasons[] = 'Le prix reste sous sa moyenne 7 jours: attention au rebond encore fragile.';
+        } elseif ($change7 !== null && $change7 > 10.0 && $pnlPct !== null && $pnlPct > 0) {
+            $reasons[] = 'Le skin cote deja au-dessus de sa moyenne 7 jours: penser a securiser si la liquidite se tasse.';
+        }
+
+        if ($floatValue !== null) {
+            $reasons[] = sprintf('Float %.4f conservee telle quelle: aucun risque de passage automatique vers un wear inferieur.', $floatValue);
+        }
+
+        return [
+            'key' => $key,
+            'label' => $label,
+            'priority' => $priority,
+            'reasons' => array_values(array_unique($reasons)),
+        ];
+    }
+
+    private function buildProfilePortfolio(array $profile, array $positions): array
+    {
+        $currentValue = 0.0;
+        $costBasis = 0.0;
+        $ready = 0;
+        $watch = 0;
+        $keep = 0;
+
+        foreach ($positions as $position) {
+            $currentValue += (float) ($position['current_price_eur'] ?? 0.0);
+            $costBasis += (float) ($position['buy_price_eur'] ?? 0.0);
+
+            $signal = (string) ($position['sell_signal'] ?? 'hold');
+            if ($signal === 'sell_now') {
+                $ready++;
+            } elseif ($signal === 'watch_sell') {
+                $watch++;
+            } else {
+                $keep++;
+            }
+        }
+
+        $pnlValue = round($currentValue - $costBasis, 2);
+        $pnlPct = $costBasis > 0 ? round((($currentValue - $costBasis) / $costBasis) * 100, 2) : null;
+        $urgent = array_slice(array_values(array_filter(
+            $positions,
+            static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'sell_now'
+        )), 0, 3);
+        $watchItems = array_slice(array_values(array_filter(
+            $positions,
+            static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'watch_sell'
+        )), 0, 3);
+
+        return [
+            'profile_id' => $profile['profile_id'],
+            'name' => $profile['name'],
+            'strategy' => $profile['strategy'],
+            'steam_profile_url' => $profile['steam_profile_url'],
+            'discord_webhook_url' => $profile['discord_webhook_url'],
+            'note' => $profile['note'],
+            'positions_count' => count($positions),
+            'ready_to_sell_count' => $ready,
+            'watch_count' => $watch,
+            'keep_count' => $keep,
+            'portfolio_value_eur' => round($currentValue, 2),
+            'cost_basis_eur' => round($costBasis, 2),
+            'pnl_eur' => $pnlValue,
+            'pnl_pct' => $pnlPct,
+            'summary' => $this->buildProfileSummaryText($profile['name'], count($positions), $ready, $watch, $keep, $pnlPct),
+            'urgent_sales' => $urgent,
+            'watch_candidates' => $watchItems,
+            'positions' => array_slice($positions, 0, 12),
+            'created_at' => $profile['created_at'],
+            'updated_at' => $profile['updated_at'],
+        ];
+    }
+
+    private function buildProfileSummaryText(string $name, int $positionsCount, int $ready, int $watch, int $keep, ?float $pnlPct): string
+    {
+        if ($positionsCount === 0) {
+            return sprintf('%s n a encore aucune position suivie. Tu pourras ensuite recevoir une lecture keep / watch / sell chaque jour.', $name);
+        }
+
+        return sprintf(
+            '%s suit %d position%s. %d vente%s prioritaire%s, %d position%s a surveiller et %d a conserver. Performance latente: %s.',
+            $name,
+            $positionsCount,
+            $positionsCount > 1 ? 's' : '',
+            $ready,
+            $ready > 1 ? 's' : '',
+            $ready > 1 ? 's' : '',
+            $watch,
+            $watch > 1 ? 's' : '',
+            $keep,
+            $pnlPct !== null ? sprintf('%+.1f%%', $pnlPct) : 'n/a'
+        );
+    }
+
+    private function wearLabelFromFloat(?float $float): ?string
+    {
+        if ($float === null || $float < 0 || $float > 1) {
+            return null;
+        }
+
+        return match (true) {
+            $float < 0.07 => 'Factory New',
+            $float < 0.15 => 'Minimal Wear',
+            $float < 0.38 => 'Field-Tested',
+            $float < 0.45 => 'Well-Worn',
+            default => 'Battle-Scarred',
+        };
+    }
+
+    private function daysSince(string $date): int
+    {
+        try {
+            $start = new \DateTimeImmutable($date);
+            $end = new \DateTimeImmutable('today');
+        } catch (\Throwable) {
+            return 0;
+        }
+
+        return (int) $start->diff($end)->format('%a');
+    }
+
+    private function normalizeDateInput(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return date('Y-m-d');
+        }
+
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
+            throw new RuntimeException('La date d achat est invalide.');
+        }
+
+        return date('Y-m-d', $timestamp);
+    }
+
+    private function parsePositiveFloat(mixed $value, string $message): float
+    {
+        $parsed = $this->parseOptionalFloat($value);
+        if ($parsed === null || $parsed <= 0) {
+            throw new RuntimeException($message);
+        }
+
+        return round($parsed, 2);
+    }
+
+    private function parseOptionalPositiveFloat(mixed $value): ?float
+    {
+        $parsed = $this->parseOptionalFloat($value);
+        if ($parsed === null) {
+            return null;
+        }
+
+        if ($parsed <= 0) {
+            throw new RuntimeException('Les seuils de vente doivent etre superieurs a 0.');
+        }
+
+        return round($parsed, 2);
+    }
+
+    private function parseOptionalFloat(mixed $value): ?float
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $normalized = trim(str_replace(',', '.', (string) $value));
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (!is_numeric($normalized)) {
+            throw new RuntimeException('Une valeur numerique attendue est invalide.');
+        }
+
+        return (float) $normalized;
+    }
+
+    private function normalizeOptionalProfileId(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $profileId = trim((string) $value);
+        if ($profileId === '') {
+            return null;
+        }
+
+        foreach ($this->readProfileEntries() as $profile) {
+            if (($profile['profile_id'] ?? null) === $profileId) {
+                return $profileId;
+            }
+        }
+
+        throw new RuntimeException('Le profil selectionne est introuvable.');
+    }
+
+    private function normalizeOptionalUrl(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $url = trim((string) $value);
+        if ($url === '') {
+            return null;
+        }
+
+        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+            throw new RuntimeException('Une URL de profil est invalide.');
+        }
+
+        return $url;
+    }
+
+    private function findMarketItemById(int $itemId): ?array
+    {
+        foreach (($this->readMarketData()['items'] ?? []) as $item) {
+            if ((int) ($item['id'] ?? 0) === $itemId) {
+                return $item;
+            }
+        }
+
+        return null;
     }
 
     private function fetchJsonWithCurl(string $url, array $headers = [], int $timeout = 60): array
@@ -1306,6 +2098,11 @@ PS1;
             static fn (array $entry): bool => ($entry['is_active'] ?? true) === true
         ));
         $csfloat = $this->readJson($this->csfloatSignalsFile, ['signals' => []]);
+        $positions = $this->positions();
+        $positionRows = $positions['data'] ?? [];
+        $positionsMeta = $positions['meta'] ?? [];
+        $profiles = $this->profiles();
+        $profileRows = $profiles['data'] ?? [];
 
         return [
             'generated_at' => date(DATE_ATOM),
@@ -1329,12 +2126,17 @@ PS1;
                 'reports_count' => count($reports),
                 'watchlist_count' => count($watchlist),
                 'csfloat_signals_count' => count($csfloat['signals'] ?? []),
+                'positions_count' => $positionsMeta['total'] ?? count($positionRows),
+                'positions_ready_to_sell_count' => $positionsMeta['ready_to_sell'] ?? 0,
+                'profiles_count' => count($profileRows),
             ],
             'catalog' => $catalog,
             'market' => $market,
             'market_backup' => $marketBackup,
             'reports' => $reports,
             'watchlist' => $watchlist,
+            'positions' => array_slice($positionRows, 0, 40),
+            'profiles' => array_slice($profileRows, 0, 20),
             'jobs' => $jobs,
             'csfloat' => $csfloat,
         ];
@@ -1370,6 +2172,8 @@ PS1;
             'matched_items' => $matchedItems,
             'matched_listing_signals' => $matchedSignals,
             'watchlist' => array_slice($state['watchlist'] ?? [], 0, 15),
+            'positions' => array_slice($state['positions'] ?? [], 0, 15),
+            'profiles' => array_slice($state['profiles'] ?? [], 0, 10),
             'recent_jobs' => array_slice($state['jobs'] ?? [], 0, 8),
             'stats' => $state['stats'] ?? [],
         ];
@@ -1405,6 +2209,8 @@ PS1;
             'latest_report_context' => $state['latest_report_context'] ?? [],
             'market_sample' => array_slice($state['market']['items'] ?? [], 0, 50),
             'watchlist' => array_slice($state['watchlist'] ?? [], 0, 20),
+            'positions' => array_slice($state['positions'] ?? [], 0, 20),
+            'profiles' => array_slice($state['profiles'] ?? [], 0, 10),
             'recent_jobs' => array_slice($state['jobs'] ?? [], 0, 10),
             'csfloat_signals_sample' => array_slice($state['csfloat']['signals'] ?? [], 0, 20),
         ];
