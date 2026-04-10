@@ -41,6 +41,15 @@ const escapeHtml = (value) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
+const strategyLabel = (value) =>
+  ({
+    balanced: "Balanced",
+    safe: "Safe",
+    swing: "Swing",
+    flip: "Flip",
+    long_term: "Long terme",
+  }[value] ?? value ?? "Balanced");
+
 const itemVisual = (item, options = {}) => {
   const label = escapeHtml(options.label ?? item?.weapon ?? item?.name ?? "CS2");
   const alt = escapeHtml(item?.name ?? options.label ?? "CS2 item");
@@ -761,13 +770,13 @@ const renderProfiles = () => {
                 <strong>${escapeHtml(profile.name)}</strong>
                 <span class="table-meta">${escapeHtml(profile.summary ?? "")}</span>
                 <div class="badge-row">
-                  <span class="badge">${escapeHtml(profile.strategy ?? "balanced")}</span>
+                  <span class="badge">${escapeHtml(strategyLabel(profile.strategy ?? "balanced"))}</span>
                   <span class="badge ${positionSignalClass((profile.ready_to_sell_count ?? 0) > 0 ? "sell_now" : ((profile.watch_count ?? 0) > 0 ? "watch_sell" : "hold"))}">${escapeHtml(String(profile.ready_to_sell_count ?? 0))} sell • ${escapeHtml(String(profile.watch_count ?? 0))} watch</span>
                   <span class="badge">${escapeHtml(String(profile.positions_count ?? 0))} positions</span>
                 </div>
                 ${profile.note ? `<span class="table-meta">${escapeHtml(profile.note)}</span>` : ""}
                 <div class="item-link-row">
-                  ${profile.steam_profile_url ? `<a class="item-link" href="${escapeHtml(profile.steam_profile_url)}" target="_blank" rel="noreferrer">Voir inventaire</a>` : ""}
+                  ${profile.steam_profile_url ? `<a class="item-link" href="${escapeHtml(profile.steam_profile_url)}" target="_blank" rel="noreferrer">Voir profil Steam</a>` : ""}
                   ${profile.discord_webhook_url ? `<span class="item-link">Discord profilé</span>` : ""}
                   <button class="item-link item-link-button item-link-danger" type="button" data-delete-profile="${escapeHtml(profile.profile_id)}">Supprimer</button>
                 </div>
@@ -1555,7 +1564,7 @@ const bindProfileForm = () => {
         });
         form.reset();
         const strategy = document.getElementById("profile-strategy");
-        if (strategy instanceof HTMLInputElement) {
+        if (strategy instanceof HTMLSelectElement) {
           strategy.value = "balanced";
         }
         await loadData();

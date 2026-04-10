@@ -388,7 +388,7 @@ final class RadarService
             $strategy = 'balanced';
         }
 
-        $steamProfileUrl = $this->normalizeOptionalUrl($payload['steam_profile_url'] ?? null);
+        $steamProfileUrl = $this->normalizeSteamProfileUrl($payload['steam_profile_url'] ?? null);
         $discordWebhookUrl = $this->normalizeOptionalUrl($payload['discord_webhook_url'] ?? null);
         $note = trim((string) ($payload['note'] ?? ''));
         $profileId = trim((string) ($payload['profile_id'] ?? ''));
@@ -1286,7 +1286,12 @@ final class RadarService
         $normalized = [];
 
         foreach ($entries as $entry) {
-            $candidate = $this->normalizeProfileEntry($entry);
+            try {
+                $candidate = $this->normalizeProfileEntry($entry);
+            } catch (\Throwable) {
+                $candidate = null;
+            }
+
             if ($candidate === null) {
                 continue;
             }
@@ -1314,7 +1319,7 @@ final class RadarService
             'profile_id' => trim((string) ($entry['profile_id'] ?? uniqid('prof_', false))),
             'name' => $name,
             'strategy' => trim((string) ($entry['strategy'] ?? 'balanced')) ?: 'balanced',
-            'steam_profile_url' => $this->normalizeOptionalUrl($entry['steam_profile_url'] ?? null),
+            'steam_profile_url' => $this->normalizeSteamProfileUrl($entry['steam_profile_url'] ?? null, false),
             'discord_webhook_url' => $this->normalizeOptionalUrl($entry['discord_webhook_url'] ?? null),
             'note' => ($note = trim((string) ($entry['note'] ?? ''))) !== '' ? $note : null,
             'is_active' => isset($entry['is_active']) ? (bool) $entry['is_active'] : true,
@@ -1667,6 +1672,50 @@ final class RadarService
 
         if (filter_var($url, FILTER_VALIDATE_URL) === false) {
             throw new RuntimeException('Une URL de profil est invalide.');
+        }
+
+        return $url;
+    }
+
+    private function normalizeSteamProfileUrl(mixed $value, bool $strict = true): ?string
+    {
+        $url = $this->normalizeOptionalUrl($value);
+        if ($url === null) {
+            return null;
+        }
+
+        $parts = parse_url($url);
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        $path = strtolower((string) ($parts['path'] ?? ''));
+
+        $isSteamCommunity = str_contains($host, 'steamcommunity.com');
+        $isTradeUrl = $isSteamCommunity && str_starts_with($path, '/tradeoffer/');
+        if ($isTradeUrl) {
+            if ($strict) {
+                throw new RuntimeException('La trade URL Steam ne peut pas servir de lien inventaire. Mets plutot un profil Steam public ou une URL d inventaire public.');
+            }
+
+            return null;
+        }
+
+        if (!$isSteamCommunity) {
+            if ($strict) {
+                throw new RuntimeException('Le lien inventaire doit pointer vers steamcommunity.com.');
+            }
+
+            return null;
+        }
+
+        $looksLikeProfile = str_starts_with($path, '/id/')
+            || str_starts_with($path, '/profiles/')
+            || str_starts_with($path, '/inventory/');
+
+        if (!$looksLikeProfile) {
+            if ($strict) {
+                throw new RuntimeException('Utilise une URL de profil Steam public ou d inventaire public, pas une URL d echange.');
+            }
+
+            return null;
         }
 
         return $url;

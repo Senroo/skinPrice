@@ -174,8 +174,14 @@
               <form class="filter-panel" id="profile-form">
                 <div class="filter-grid">
                   <label class="field"><span>Nom du profil</span><input id="profile-name" name="name" placeholder="Portefeuille main" /></label>
-                  <label class="field"><span>Strategie</span><input id="profile-strategy" name="strategy" placeholder="balanced / safe / swing" value="balanced" /></label>
-                  <label class="field"><span>Lien inventaire / Steam</span><input id="profile-steam-url" name="steam_profile_url" placeholder="https://steamcommunity.com/..." /></label>
+                  <label class="field"><span>Strategie</span><select id="profile-strategy" name="strategy">
+                    <option value="balanced" selected>Balanced</option>
+                    <option value="safe">Safe</option>
+                    <option value="swing">Swing</option>
+                    <option value="flip">Flip</option>
+                    <option value="long_term">Long terme</option>
+                  </select></label>
+                  <label class="field"><span>Profil Steam / inventaire public</span><input id="profile-steam-url" name="steam_profile_url" placeholder="https://steamcommunity.com/id/... ou /profiles/..." /></label>
                   <label class="field"><span>Webhook Discord perso</span><input id="profile-discord-url" name="discord_webhook_url" placeholder="https://discord.com/api/webhooks/..." /></label>
                 </div>
                 <label class="field"><span>Note</span><input id="profile-note" name="note" placeholder="ex: portefeuille long terme knives / redlines" /></label>
@@ -183,7 +189,7 @@
                   <button class="action-button" type="submit">Creer le profil</button>
                 </div>
               </form>
-              <p class="table-meta" id="profile-feedback">Cree un profil, puis rattache-lui tes positions depuis la fiche item.</p>
+              <p class="table-meta" id="profile-feedback">Cree un profil avec un lien Steam public. Les trade URLs ne servent pas pour l analyse d inventaire.</p>
             </article>
           </div>
 
