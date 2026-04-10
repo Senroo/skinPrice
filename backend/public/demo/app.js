@@ -777,6 +777,7 @@ const renderProfiles = () => {
                   <span class="badge ${positionSignalClass((profile.ready_to_sell_count ?? 0) > 0 ? "sell_now" : ((profile.watch_count ?? 0) > 0 ? "watch_sell" : "hold"))}">${escapeHtml(String(profile.ready_to_sell_count ?? 0))} sell • ${escapeHtml(String(profile.watch_count ?? 0))} watch</span>
                   <span class="badge">${escapeHtml(String(profile.positions_count ?? 0))} positions</span>
                 </div>
+                ${profile.advice_text ? `<span class="table-meta">${escapeHtml(profile.advice_title ?? "Lecture auto")} • ${escapeHtml(profile.advice_text)}</span>` : ""}
                 ${profile.note ? `<span class="table-meta">${escapeHtml(profile.note)}</span>` : ""}
                 <div class="item-link-row">
                   <button class="item-link item-link-button" type="button" data-open-profile="${escapeHtml(profile.profile_id)}">Voir portefeuille</button>
@@ -871,6 +872,7 @@ const renderPortfolioRows = (rows, emptyText) =>
               <div class="table-item-copy">
                 ${itemNameMarkup(item)}
                 <span class="table-meta">${escapeHtml(item.primary_reason ?? "Item portefeuille")}</span>
+                <span class="table-meta">prix unitaire ${euro(item.current_price_eur ?? item.current_price)} • total ligne ${euro(item.current_total_value_eur ?? item.current_price_eur ?? item.current_price)}</span>
                 <span class="table-meta">24h ${pct(item.change_vs_yesterday_pct)} • 7j ${pct(item.change_vs_7d_pct)} • volume ${escapeHtml(String(item.sales_24h_volume ?? 0))}</span>
                 <div class="badge-row">
                   <span class="badge ${positionSignalClass(item.sell_signal)}">${escapeHtml(item.sell_label ?? "Garder")}</span>
@@ -882,7 +884,7 @@ const renderPortfolioRows = (rows, emptyText) =>
               </div>
             </div>
             <div class="value-stack">
-              <strong>${euro(item.current_price_eur ?? item.current_price)}</strong>
+              <strong>${euro(item.current_total_value_eur ?? item.current_price_eur ?? item.current_price)}</strong>
               <span class="table-meta">${escapeHtml(item.sell_signal === "sell_now" ? "sortie prioritaire" : item.sell_signal === "watch_sell" ? "surveillance" : "keep")}</span>
             </div>
           </article>
@@ -957,10 +959,10 @@ const renderPortfolioDetail = () => {
   }
 
   kpis.innerHTML = [
-    { label: "Valeur suivie", value: euro(detail.portfolio_value_eur), meta: `${detail.ready_to_sell_count ?? 0} sell maintenant` },
+    { label: "Valeur totale ATM", value: euro(detail.portfolio_value_eur), meta: `${detail.ready_to_sell_count ?? 0} sell maintenant` },
     { label: "A surveiller", value: String(detail.watch_count ?? 0), meta: `${detail.keep_count ?? 0} keep` },
     { label: "PnL latent", value: detail.pnl_pct == null ? "n/a" : pct(detail.pnl_pct), meta: `cout ${euro(detail.cost_basis_eur)}` },
-    { label: "Inventaire", value: String(detail.inventory_items_count ?? 0), meta: `${detail.manual_positions_count ?? 0} positions manuelles` },
+    { label: "Inventaire", value: String(detail.inventory_items_count ?? 0), meta: `${detail.units_count ?? 0} unites suivies` },
   ]
     .map(
       (card) => `
@@ -999,6 +1001,13 @@ const renderPortfolioDetail = () => {
             ${detail.steam_profile_url ? `<a class="item-link" href="${escapeHtml(detail.steam_profile_url)}" target="_blank" rel="noreferrer">Voir profil Steam</a>` : ""}
             ${detail.discord_webhook_url ? `<span class="item-link">Webhook Discord actif</span>` : ""}
           </div>
+        </div>
+      </article>
+      <article class="table-item">
+        <div class="table-item-main">
+          <strong>${escapeHtml(detail.advice_title ?? "Lecture auto du marche")}</strong>
+          <span class="table-meta">${escapeHtml(detail.advice_text ?? "La recommandation se recalcule a chaque refresh marche et a chaque sync market.")}</span>
+          <span class="table-meta">Cette lecture est automatiquement mise a jour quand le marche est recharge.</span>
         </div>
       </article>
       <article class="table-item">

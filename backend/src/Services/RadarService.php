@@ -1629,12 +1629,14 @@ final class RadarService
             'item_id' => (int) $entry['item_id'],
             'market_hash_name' => $entry['market_hash_name'],
             'name' => $item['name'] ?? $entry['market_hash_name'],
+            'amount' => 1,
             'weapon' => $item['weapon'] ?? null,
             'rarity' => $item['rarity'] ?? null,
             'image_url' => $item['image_url'] ?? null,
             'item_page' => $item['item_page'] ?? null,
             'market_page' => $item['market_page'] ?? null,
             'buy_price_eur' => $buyPrice,
+            'cost_basis_total_eur' => $buyPrice,
             'buy_date' => $entry['buy_date'],
             'days_held' => $this->daysSince($entry['buy_date']),
             'buy_float' => $floatValue,
@@ -1649,6 +1651,7 @@ final class RadarService
             'stop_loss_pct' => isset($entry['stop_loss_pct']) ? (float) $entry['stop_loss_pct'] : null,
             'target_gap_pct' => $targetDelta,
             'current_price_eur' => $currentPrice,
+            'current_total_value_eur' => $currentPrice,
             'pnl_eur' => $pnlValue,
             'pnl_pct' => $pnlPct,
             'interest_score' => $item['interest_score'] ?? null,
@@ -1755,12 +1758,14 @@ final class RadarService
         $ready = 0;
         $watch = 0;
         $keep = 0;
+        $units = 0;
         $analysisRows = $positions !== [] ? $positions : $inventoryHoldings;
         $usesImportedInventory = $positions === [] && $inventoryHoldings !== [];
 
         foreach ($analysisRows as $position) {
-            $currentValue += (float) ($position['current_price_eur'] ?? 0.0);
-            $costBasis += (float) ($position['buy_price_eur'] ?? 0.0);
+            $currentValue += (float) ($position['current_total_value_eur'] ?? $position['current_price_eur'] ?? 0.0);
+            $costBasis += (float) ($position['cost_basis_total_eur'] ?? $position['buy_price_eur'] ?? 0.0);
+            $units += max(1, (int) ($position['amount'] ?? 1));
 
             $signal = (string) ($position['sell_signal'] ?? 'hold');
             if ($signal === 'sell_now') {
@@ -1782,6 +1787,7 @@ final class RadarService
             $analysisRows,
             static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'watch_sell'
         )), 0, 3);
+        $advice = $this->buildProfileActionAdvice($ready, $watch, $keep, count($analysisRows), $usesImportedInventory);
 
         return [
             'profile_id' => $profile['profile_id'],
@@ -1796,6 +1802,7 @@ final class RadarService
             'positions_count' => $usesImportedInventory ? count($inventoryHoldings) : count($positions),
             'manual_positions_count' => count($positions),
             'inventory_items_count' => count($inventoryHoldings),
+            'units_count' => $units,
             'analysis_mode' => $usesImportedInventory ? 'inventory' : 'positions',
             'ready_to_sell_count' => $ready,
             'watch_count' => $watch,
@@ -1805,6 +1812,8 @@ final class RadarService
             'pnl_eur' => $pnlValue,
             'pnl_pct' => $pnlPct,
             'summary' => $this->buildProfileSummaryText($profile['name'], count($positions), count($inventoryHoldings), $ready, $watch, $keep, $pnlPct, $usesImportedInventory, $profile['inventory_error'] ?? null),
+            'advice_title' => $advice['title'],
+            'advice_text' => $advice['text'],
             'urgent_sales' => $urgent,
             'watch_candidates' => $watchItems,
             'positions' => array_slice($positions, 0, 12),
@@ -1855,11 +1864,42 @@ final class RadarService
         );
     }
 
+    private function buildProfileActionAdvice(int $ready, int $watch, int $keep, int $analysisCount, bool $usesImportedInventory): array
+    {
+        if ($analysisCount === 0) {
+            return [
+                'title' => 'Aucune lecture portefeuille',
+                'text' => 'Importe un inventaire Steam ou ajoute une position manuelle pour recevoir une lecture keep / watch / sell.',
+            ];
+        }
+
+        if ($ready > 0) {
+            return [
+                'title' => 'Ventes prioritaires detectees',
+                'text' => sprintf('%d item%s ressort%s en vente prioritaire sur le dernier refresh marche. %d item%s rest%s a surveiller.', $ready, $ready > 1 ? 's' : '', $ready > 1 ? 'ent' : '', $watch, $watch > 1 ? 's' : '', $watch > 1 ? 'ent' : ''),
+            ];
+        }
+
+        if ($watch > 0) {
+            return [
+                'title' => 'Surveillance active',
+                'text' => sprintf('Aucune vente immediate, mais %d item%s demand%s une surveillance rapprochee apres chaque refresh marche.', $watch, $watch > 1 ? 's' : '', $watch > 1 ? 'ent' : ''),
+            ];
+        }
+
+        return [
+            'title' => $usesImportedInventory ? 'Portefeuille a conserver' : 'Positions stables',
+            'text' => sprintf('Le dernier refresh marche ne remonte pas de vente urgente. %d item%s sembl%s plutot a conserver pour le moment.', $keep, $keep > 1 ? 's' : '', $keep > 1 ? 'ent' : ''),
+        ];
+    }
+
     private function enrichInventoryHolding(array $entry, array $marketIndex): array
     {
         $marketItem = $marketIndex[$entry['market_hash_name']] ?? null;
         $signal = $this->buildInventorySellSignal($marketItem, $entry);
         $currentPrice = isset($marketItem['current_price']) ? (float) $marketItem['current_price'] : null;
+        $amount = max(1, (int) ($entry['amount'] ?? 1));
+        $totalValue = $currentPrice !== null ? round($currentPrice * $amount, 2) : null;
 
         return [
             'profile_id' => $entry['profile_id'],
@@ -1869,7 +1909,7 @@ final class RadarService
             'id' => $marketItem['id'] ?? $this->idFromName($entry['market_hash_name']),
             'market_hash_name' => $entry['market_hash_name'],
             'name' => $entry['name'],
-            'amount' => $entry['amount'],
+            'amount' => $amount,
             'tradable' => $entry['tradable'],
             'marketable' => $entry['marketable'],
             'commodity' => $entry['commodity'],
@@ -1877,7 +1917,9 @@ final class RadarService
             'item_page' => $marketItem['item_page'] ?? $entry['item_page'],
             'market_page' => $marketItem['market_page'] ?? null,
             'current_price_eur' => $currentPrice,
+            'current_total_value_eur' => $totalValue,
             'buy_price_eur' => 0.0,
+            'cost_basis_total_eur' => 0.0,
             'interest_score' => $marketItem['interest_score'] ?? null,
             'change_vs_yesterday_pct' => $marketItem['change_vs_yesterday_pct'] ?? null,
             'change_vs_7d_pct' => $marketItem['change_vs_7d_pct'] ?? null,
