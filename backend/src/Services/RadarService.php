@@ -1099,7 +1099,7 @@ final class RadarService
                 $report['ai_best_deals_error'] = null;
             }
         } catch (\Throwable $exception) {
-            $report['ai_best_deals_error'] = $exception->getMessage();
+            $report['ai_best_deals_error'] = $this->normalizeAiErrorMessage($exception->getMessage());
         }
 
         $reports = array_values(array_filter(
@@ -2281,6 +2281,7 @@ final class RadarService
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => min(12, max(3, $timeout)),
             CURLOPT_HTTPHEADER => array_merge([
                 'User-Agent: CS2 Market Daily Radar',
             ], $headers),
@@ -2317,6 +2318,7 @@ final class RadarService
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => min(12, max(3, $timeout)),
             CURLOPT_HTTPHEADER => array_merge([
                 'User-Agent: CS2 Market Daily Radar',
                 'Accept: application/json',
@@ -2357,6 +2359,7 @@ final class RadarService
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => min(12, max(3, $timeout)),
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => $body,
             CURLOPT_HTTPHEADER => array_merge([
@@ -2958,7 +2961,7 @@ PS1;
                 'HTTP-Referer: https://cs2-market-daily-radar.local',
                 'X-Title: CS2 Market Daily Radar',
             ],
-            90
+            $this->openRouterTimeoutSeconds()
         );
 
         $content = $this->extractAssistantContent($response);
@@ -3030,7 +3033,7 @@ PS1;
                 'HTTP-Referer: https://cs2-market-daily-radar.local',
                 'X-Title: CS2 Market Daily Radar Skin Advisor',
             ],
-            90
+            $this->openRouterTimeoutSeconds()
         );
 
         $content = $this->extractAssistantContent($response);
@@ -3335,6 +3338,7 @@ PS1;
 
     private function fallbackSkinAdvice(string $message, array $matchedItems, ?float $observedPrice, ?string $error = null): array
     {
+        $error = $error !== null ? $this->normalizeAiErrorMessage($error) : null;
         $matchedItem = $matchedItems[0] ?? null;
         if ($matchedItem === null) {
             return [
@@ -3899,6 +3903,39 @@ PS1;
     private function openRouterModel(): string
     {
         return $this->env('OPENROUTER_MODEL') ?? 'google/gemma-4-26b-a4b-it';
+    }
+
+    private function openRouterTimeoutSeconds(): int
+    {
+        $configured = $this->env('OPENROUTER_TIMEOUT_SECONDS');
+        if ($configured !== null && is_numeric($configured)) {
+            return max(10, min(60, (int) $configured));
+        }
+
+        return 35;
+    }
+
+    private function normalizeAiErrorMessage(string $message): string
+    {
+        $normalized = trim($message);
+        if ($normalized === '') {
+            return 'Analyse IA temporairement indisponible.';
+        }
+
+        $lower = strtolower($normalized);
+        if (str_contains($lower, 'operation timed out') || str_contains($lower, 'timed out')) {
+            return 'Analyse IA web indisponible pour le moment: OpenRouter n a pas repondu a temps. Analyse locale affichee.';
+        }
+
+        if (str_contains($lower, 'could not resolve host') || str_contains($lower, 'failed to connect')) {
+            return 'Analyse IA web indisponible pour le moment: connexion reseau impossible vers OpenRouter. Analyse locale affichee.';
+        }
+
+        if (str_contains($lower, 'http 429') || str_contains($lower, 'rate limit')) {
+            return 'Analyse IA web indisponible pour le moment: limite OpenRouter atteinte. Reessaie dans un instant.';
+        }
+
+        return $normalized;
     }
 
     private function discordWebhookIsConfigured(): bool
