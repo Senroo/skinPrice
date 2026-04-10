@@ -86,6 +86,11 @@ final class Application
                 return;
             }
 
+            if ($method === 'POST' && preg_match('#^/api/profiles/(?P<id>[^/]+)/sync-inventory$#', $path, $matches) === 1) {
+                JsonResponse::send($this->publicController()->syncProfileInventory((string) $matches['id']));
+                return;
+            }
+
             if ($method === 'POST' && $path === '/api/positions') {
                 JsonResponse::send($this->publicController()->savePosition($this->readJsonBody()));
                 return;

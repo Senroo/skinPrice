@@ -63,6 +63,11 @@ final class PublicController
         return $this->radarService->deleteProfile($profileId);
     }
 
+    public function syncProfileInventory(string $profileId): array
+    {
+        return $this->radarService->syncProfileInventory($profileId);
+    }
+
     public function savePosition(array $payload): array
     {
         return $this->radarService->savePosition($payload);

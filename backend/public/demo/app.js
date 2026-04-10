@@ -798,6 +798,62 @@ const renderProfiles = () => {
           </div>
         </article>
       `;
+
+  enhanceProfileCards();
+};
+
+const enhanceProfileCards = () => {
+  const root = document.getElementById("profiles-table");
+  if (!root) {
+    return;
+  }
+
+  const cards = root.querySelectorAll(".table-item");
+  const profiles = state.profiles?.data ?? [];
+  cards.forEach((card, index) => {
+    const profile = profiles[index];
+    if (!profile) {
+      return;
+    }
+
+    const badgeRow = card.querySelector(".badge-row");
+    if (badgeRow && !badgeRow.querySelector("[data-profile-inventory-badge]")) {
+      const inventoryBadge = document.createElement("span");
+      inventoryBadge.className = "badge";
+      inventoryBadge.dataset.profileInventoryBadge = "true";
+      inventoryBadge.textContent = `${profile.inventory_items_count ?? 0} items inventaire`;
+      badgeRow.appendChild(inventoryBadge);
+    }
+
+    const copy = card.querySelector(".table-item-main");
+    if (copy instanceof HTMLElement) {
+      if (profile.inventory_synced_at && !copy.querySelector("[data-profile-sync-meta]")) {
+        const meta = document.createElement("span");
+        meta.className = "table-meta";
+        meta.dataset.profileSyncMeta = "true";
+        meta.textContent = `inventaire sync ${String(profile.inventory_synced_at).slice(0, 16).replace("T", " ")}`;
+        copy.insertBefore(meta, copy.querySelector(".item-link-row"));
+      }
+
+      if (profile.inventory_error && !copy.querySelector("[data-profile-error]")) {
+        const meta = document.createElement("span");
+        meta.className = "table-meta negative";
+        meta.dataset.profileError = "true";
+        meta.textContent = profile.inventory_error;
+        copy.insertBefore(meta, copy.querySelector(".item-link-row"));
+      }
+    }
+
+    const actions = card.querySelector(".item-link-row");
+    if (actions instanceof HTMLElement && profile.steam_profile_url && !actions.querySelector("[data-sync-profile]")) {
+      const syncButton = document.createElement("button");
+      syncButton.type = "button";
+      syncButton.className = "item-link item-link-button";
+      syncButton.dataset.syncProfile = profile.profile_id;
+      syncButton.textContent = "Sync inventaire";
+      actions.insertBefore(syncButton, actions.querySelector("[data-delete-profile]"));
+    }
+  });
 };
 
 const populateProfileSelect = () => {
@@ -1583,6 +1639,36 @@ const bindProfileForm = () => {
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const syncButton = target.closest("[data-sync-profile]");
+    if (syncButton instanceof HTMLElement) {
+      const profileId = syncButton.dataset.syncProfile;
+      if (!profileId) {
+        return;
+      }
+
+      event.preventDefault();
+
+      try {
+        if (feedback) {
+          feedback.textContent = "Synchronisation de l inventaire Steam...";
+        }
+        const result = await fetchJson(`/api/profiles/${encodeURIComponent(profileId)}/sync-inventory`, {
+          method: "POST",
+        });
+        await loadData();
+        renderAll();
+        if (feedback) {
+          feedback.textContent = result.message ?? "Inventaire synchronise.";
+        }
+      } catch (error) {
+        if (feedback) {
+          feedback.textContent = error.message;
+        }
+      }
+
       return;
     }
 

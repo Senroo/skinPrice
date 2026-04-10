@@ -25,7 +25,9 @@ final class RadarService
     private string $watchlistFile;
     private string $positionsFile;
     private string $profilesFile;
+    private string $inventoryFile;
     private string $stateFile;
+    private bool $buildingCanonicalState = false;
 
     public function __construct()
     {
@@ -42,12 +44,14 @@ final class RadarService
         $this->watchlistFile = $this->storageDir . '/watchlist.json';
         $this->positionsFile = $this->storageDir . '/positions.json';
         $this->profilesFile = $this->storageDir . '/profiles.json';
+        $this->inventoryFile = $this->storageDir . '/profile_inventory.json';
         $this->stateFile = $this->storageDir . '/radar_state.json';
 
         $this->ensureDirectories();
         $this->ensureWatchlist();
         $this->ensurePositions();
         $this->ensureProfiles();
+        $this->ensureProfileInventory();
     }
 
     private function detectStoragePath(): string
@@ -346,7 +350,35 @@ final class RadarService
     public function profiles(): array
     {
         $profiles = $this->readProfileEntries();
+        if (!$this->buildingCanonicalState) {
+            foreach ($profiles as $profile) {
+                $hasSteamProfile = is_string($profile['steam_profile_url'] ?? null) && trim((string) $profile['steam_profile_url']) !== '';
+                $neverSynced = empty($profile['inventory_synced_at']);
+                if (!$hasSteamProfile || !$neverSynced) {
+                    continue;
+                }
+
+                try {
+                    $this->syncProfileInventory((string) $profile['profile_id']);
+                } catch (\Throwable $exception) {
+                    $entries = $this->readProfileEntries();
+                    foreach ($entries as &$candidate) {
+                        if (($candidate['profile_id'] ?? null) !== ($profile['profile_id'] ?? null)) {
+                            continue;
+                        }
+
+                        $candidate['inventory_error'] = $exception->getMessage();
+                        $candidate['updated_at'] = date(DATE_ATOM);
+                    }
+                    unset($candidate);
+                    $this->writeProfileEntries($entries);
+                }
+            }
+
+            $profiles = $this->readProfileEntries();
+        }
         $positions = $this->positions()['data'] ?? [];
+        $inventoryHoldings = $this->profileInventory()['data'] ?? [];
         $profilesData = [];
 
         foreach ($profiles as $profile) {
@@ -354,7 +386,11 @@ final class RadarService
                 $positions,
                 static fn (array $position): bool => ($position['profile_id'] ?? null) === ($profile['profile_id'] ?? null)
             ));
-            $profilesData[] = $this->buildProfilePortfolio($profile, $profilePositions);
+            $profileInventory = array_values(array_filter(
+                $inventoryHoldings,
+                static fn (array $holding): bool => ($holding['profile_id'] ?? null) === ($profile['profile_id'] ?? null)
+            ));
+            $profilesData[] = $this->buildProfilePortfolio($profile, $profilePositions, $profileInventory);
         }
 
         usort($profilesData, static function (array $left, array $right): int {
@@ -371,8 +407,95 @@ final class RadarService
             'meta' => [
                 'total' => count($profilesData),
                 'positions_count' => count($positions),
+                'inventory_items_count' => count($inventoryHoldings),
                 'profiles_ready_to_review' => count(array_filter($profilesData, static fn (array $profile): bool => ($profile['ready_to_sell_count'] ?? 0) > 0)),
             ],
+        ];
+    }
+
+    public function profileInventory(?string $profileId = null): array
+    {
+        $marketIndex = [];
+        foreach (($this->readMarketData()['items'] ?? []) as $item) {
+            $marketIndex[(string) ($item['market_hash_name'] ?? '')] = $item;
+        }
+
+        $holdings = array_map(
+            fn (array $entry): array => $this->enrichInventoryHolding($entry, $marketIndex),
+            $this->readProfileInventoryEntries()
+        );
+
+        if ($profileId !== null) {
+            $holdings = array_values(array_filter(
+                $holdings,
+                static fn (array $holding): bool => ($holding['profile_id'] ?? null) === $profileId
+            ));
+        }
+
+        usort($holdings, static function (array $left, array $right): int {
+            $priorityCompare = (int) ($right['sell_priority'] ?? 0) <=> (int) ($left['sell_priority'] ?? 0);
+            if ($priorityCompare !== 0) {
+                return $priorityCompare;
+            }
+
+            return strcmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? ''));
+        });
+
+        return [
+            'data' => $holdings,
+            'meta' => [
+                'total' => count($holdings),
+                'ready_to_sell' => count(array_filter($holdings, static fn (array $holding): bool => ($holding['sell_signal'] ?? '') === 'sell_now')),
+                'watch_to_sell' => count(array_filter($holdings, static fn (array $holding): bool => ($holding['sell_signal'] ?? '') === 'watch_sell')),
+                'keep' => count(array_filter($holdings, static fn (array $holding): bool => ($holding['sell_signal'] ?? '') === 'hold')),
+            ],
+        ];
+    }
+
+    public function syncProfileInventory(string $profileId): array
+    {
+        $profile = $this->findProfileById($profileId);
+        if ($profile === null) {
+            throw new RuntimeException('Profil introuvable.');
+        }
+
+        $steamProfileUrl = $profile['steam_profile_url'] ?? null;
+        if (!is_string($steamProfileUrl) || trim($steamProfileUrl) === '') {
+            throw new RuntimeException('Ajoute un profil Steam public avant de sync l inventaire.');
+        }
+
+        $steamId64 = $this->resolveSteamId64FromProfileUrl($steamProfileUrl);
+        $inventory = $this->fetchSteamInventory($steamId64);
+        $items = $this->mapSteamInventoryItems($inventory, $profileId, $profile);
+
+        $entries = $this->readProfileInventoryEntries();
+        $entries = array_values(array_filter(
+            $entries,
+            static fn (array $entry): bool => ($entry['profile_id'] ?? null) !== $profileId
+        ));
+        array_unshift($entries, ...$items);
+        $this->writeProfileInventoryEntries($entries);
+
+        $profiles = $this->readProfileEntries();
+        foreach ($profiles as &$candidate) {
+            if (($candidate['profile_id'] ?? null) !== $profileId) {
+                continue;
+            }
+
+            $candidate['steam_id64'] = $steamId64;
+            $candidate['inventory_synced_at'] = date(DATE_ATOM);
+            $candidate['inventory_error'] = null;
+            $candidate['updated_at'] = date(DATE_ATOM);
+        }
+        unset($candidate);
+        $this->writeProfileEntries($profiles);
+
+        return [
+            'status' => 'success',
+            'message' => sprintf('Inventaire Steam synchronise: %d item%s importe%s.', count($items), count($items) > 1 ? 's' : '', count($items) > 1 ? 's' : ''),
+            'profile_id' => $profileId,
+            'steam_id64' => $steamId64,
+            'items_imported' => count($items),
         ];
     }
 
@@ -424,6 +547,24 @@ final class RadarService
 
         $this->writeProfileEntries($entries);
 
+        if ($steamProfileUrl !== null) {
+            try {
+                $this->syncProfileInventory($entry['profile_id']);
+            } catch (\Throwable $exception) {
+                $entries = $this->readProfileEntries();
+                foreach ($entries as &$candidate) {
+                    if (($candidate['profile_id'] ?? null) !== $entry['profile_id']) {
+                        continue;
+                    }
+
+                    $candidate['inventory_error'] = $exception->getMessage();
+                    $candidate['updated_at'] = date(DATE_ATOM);
+                }
+                unset($candidate);
+                $this->writeProfileEntries($entries);
+            }
+        }
+
         $profile = null;
         foreach ($this->profiles()['data'] as $candidate) {
             if (($candidate['profile_id'] ?? null) === $entry['profile_id']) {
@@ -466,6 +607,12 @@ final class RadarService
         }
         unset($position);
         $this->writePositionEntries($positions);
+
+        $inventory = array_values(array_filter(
+            $this->readProfileInventoryEntries(),
+            static fn (array $entry): bool => ($entry['profile_id'] ?? null) !== $profileId
+        ));
+        $this->writeProfileInventoryEntries($inventory);
 
         return [
             'status' => 'success',
@@ -1130,6 +1277,15 @@ final class RadarService
         ]);
     }
 
+    private function ensureProfileInventory(): void
+    {
+        if (is_file($this->inventoryFile)) {
+            return;
+        }
+
+        $this->writeJson($this->inventoryFile, []);
+    }
+
     private function seedWatchlistEntry(string $marketHashName, string $note): array
     {
         $now = date(DATE_ATOM);
@@ -1302,6 +1458,23 @@ final class RadarService
         return array_values($normalized);
     }
 
+    private function readProfileInventoryEntries(): array
+    {
+        $entries = $this->readJson($this->inventoryFile, []);
+        $normalized = [];
+
+        foreach ($entries as $entry) {
+            $candidate = $this->normalizeProfileInventoryEntry($entry);
+            if ($candidate === null) {
+                continue;
+            }
+
+            $normalized[$candidate['profile_id'] . ':' . $candidate['asset_id']] = $candidate;
+        }
+
+        return array_values($normalized);
+    }
+
     private function normalizeProfileEntry(mixed $entry): ?array
     {
         if (!is_array($entry)) {
@@ -1320,9 +1493,12 @@ final class RadarService
             'name' => $name,
             'strategy' => trim((string) ($entry['strategy'] ?? 'balanced')) ?: 'balanced',
             'steam_profile_url' => $this->normalizeSteamProfileUrl($entry['steam_profile_url'] ?? null, false),
+            'steam_id64' => isset($entry['steam_id64']) ? trim((string) $entry['steam_id64']) : null,
             'discord_webhook_url' => $this->normalizeOptionalUrl($entry['discord_webhook_url'] ?? null),
             'note' => ($note = trim((string) ($entry['note'] ?? ''))) !== '' ? $note : null,
             'is_active' => isset($entry['is_active']) ? (bool) $entry['is_active'] : true,
+            'inventory_synced_at' => isset($entry['inventory_synced_at']) ? (string) $entry['inventory_synced_at'] : null,
+            'inventory_error' => isset($entry['inventory_error']) ? trim((string) $entry['inventory_error']) : null,
             'created_at' => (string) ($entry['created_at'] ?? $now),
             'updated_at' => (string) ($entry['updated_at'] ?? $entry['created_at'] ?? $now),
         ];
@@ -1331,6 +1507,41 @@ final class RadarService
     private function writeProfileEntries(array $entries): void
     {
         $this->writeJson($this->profilesFile, array_values($entries));
+    }
+
+    private function normalizeProfileInventoryEntry(mixed $entry): ?array
+    {
+        if (!is_array($entry)) {
+            return null;
+        }
+
+        $profileId = trim((string) ($entry['profile_id'] ?? ''));
+        $assetId = trim((string) ($entry['asset_id'] ?? ''));
+        $marketHashName = trim((string) ($entry['market_hash_name'] ?? ''));
+        if ($profileId === '' || $assetId === '' || $marketHashName === '') {
+            return null;
+        }
+
+        return [
+            'profile_id' => $profileId,
+            'asset_id' => $assetId,
+            'class_id' => trim((string) ($entry['class_id'] ?? '')),
+            'instance_id' => trim((string) ($entry['instance_id'] ?? '')),
+            'market_hash_name' => $marketHashName,
+            'name' => trim((string) ($entry['name'] ?? $marketHashName)) ?: $marketHashName,
+            'amount' => max(1, (int) ($entry['amount'] ?? 1)),
+            'tradable' => isset($entry['tradable']) ? (bool) $entry['tradable'] : true,
+            'marketable' => isset($entry['marketable']) ? (bool) $entry['marketable'] : true,
+            'commodity' => isset($entry['commodity']) ? (bool) $entry['commodity'] : false,
+            'image_url' => isset($entry['image_url']) ? trim((string) $entry['image_url']) : null,
+            'item_page' => isset($entry['item_page']) ? trim((string) $entry['item_page']) : null,
+            'imported_at' => isset($entry['imported_at']) ? (string) $entry['imported_at'] : date(DATE_ATOM),
+        ];
+    }
+
+    private function writeProfileInventoryEntries(array $entries): void
+    {
+        $this->writeJson($this->inventoryFile, array_values($entries));
     }
 
     private function enrichPositionEntry(array $entry, array $marketIndex, array $profileNames = []): array
@@ -1477,15 +1688,17 @@ final class RadarService
         ];
     }
 
-    private function buildProfilePortfolio(array $profile, array $positions): array
+    private function buildProfilePortfolio(array $profile, array $positions, array $inventoryHoldings = []): array
     {
         $currentValue = 0.0;
         $costBasis = 0.0;
         $ready = 0;
         $watch = 0;
         $keep = 0;
+        $analysisRows = $positions !== [] ? $positions : $inventoryHoldings;
+        $usesImportedInventory = $positions === [] && $inventoryHoldings !== [];
 
-        foreach ($positions as $position) {
+        foreach ($analysisRows as $position) {
             $currentValue += (float) ($position['current_price_eur'] ?? 0.0);
             $costBasis += (float) ($position['buy_price_eur'] ?? 0.0);
 
@@ -1502,11 +1715,11 @@ final class RadarService
         $pnlValue = round($currentValue - $costBasis, 2);
         $pnlPct = $costBasis > 0 ? round((($currentValue - $costBasis) / $costBasis) * 100, 2) : null;
         $urgent = array_slice(array_values(array_filter(
-            $positions,
+            $analysisRows,
             static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'sell_now'
         )), 0, 3);
         $watchItems = array_slice(array_values(array_filter(
-            $positions,
+            $analysisRows,
             static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'watch_sell'
         )), 0, 3);
 
@@ -1515,9 +1728,15 @@ final class RadarService
             'name' => $profile['name'],
             'strategy' => $profile['strategy'],
             'steam_profile_url' => $profile['steam_profile_url'],
+            'steam_id64' => $profile['steam_id64'] ?? null,
             'discord_webhook_url' => $profile['discord_webhook_url'],
             'note' => $profile['note'],
-            'positions_count' => count($positions),
+            'inventory_synced_at' => $profile['inventory_synced_at'] ?? null,
+            'inventory_error' => $profile['inventory_error'] ?? null,
+            'positions_count' => $usesImportedInventory ? count($inventoryHoldings) : count($positions),
+            'manual_positions_count' => count($positions),
+            'inventory_items_count' => count($inventoryHoldings),
+            'analysis_mode' => $usesImportedInventory ? 'inventory' : 'positions',
             'ready_to_sell_count' => $ready,
             'watch_count' => $watch,
             'keep_count' => $keep,
@@ -1525,19 +1744,40 @@ final class RadarService
             'cost_basis_eur' => round($costBasis, 2),
             'pnl_eur' => $pnlValue,
             'pnl_pct' => $pnlPct,
-            'summary' => $this->buildProfileSummaryText($profile['name'], count($positions), $ready, $watch, $keep, $pnlPct),
+            'summary' => $this->buildProfileSummaryText($profile['name'], count($positions), count($inventoryHoldings), $ready, $watch, $keep, $pnlPct, $usesImportedInventory, $profile['inventory_error'] ?? null),
             'urgent_sales' => $urgent,
             'watch_candidates' => $watchItems,
             'positions' => array_slice($positions, 0, 12),
+            'inventory_items' => array_slice($inventoryHoldings, 0, 12),
             'created_at' => $profile['created_at'],
             'updated_at' => $profile['updated_at'],
         ];
     }
 
-    private function buildProfileSummaryText(string $name, int $positionsCount, int $ready, int $watch, int $keep, ?float $pnlPct): string
+    private function buildProfileSummaryText(string $name, int $positionsCount, int $inventoryCount, int $ready, int $watch, int $keep, ?float $pnlPct, bool $usesImportedInventory, ?string $inventoryError = null): string
     {
-        if ($positionsCount === 0) {
-            return sprintf('%s n a encore aucune position suivie. Tu pourras ensuite recevoir une lecture keep / watch / sell chaque jour.', $name);
+        if ($inventoryError !== null && $positionsCount === 0 && $inventoryCount === 0) {
+            return sprintf('%s: import inventaire impossible pour le moment. %s', $name, $inventoryError);
+        }
+
+        if ($positionsCount === 0 && $inventoryCount === 0) {
+            return sprintf('%s n a encore aucun item importe. Ajoute un profil Steam public ou saisis des positions manuelles.', $name);
+        }
+
+        if ($usesImportedInventory) {
+            return sprintf(
+                '%s suit %d item%s importe%s depuis Steam. %d vente%s potentielle%s, %d item%s a surveiller et %d a conserver. Les PnL restent a 0 tant que tu n ajoutes pas de prix d entree.',
+                $name,
+                $inventoryCount,
+                $inventoryCount > 1 ? 's' : '',
+                $inventoryCount > 1 ? 's' : '',
+                $ready,
+                $ready > 1 ? 's' : '',
+                $ready > 1 ? 's' : '',
+                $watch,
+                $watch > 1 ? 's' : '',
+                $keep
+            );
         }
 
         return sprintf(
@@ -1553,6 +1793,85 @@ final class RadarService
             $keep,
             $pnlPct !== null ? sprintf('%+.1f%%', $pnlPct) : 'n/a'
         );
+    }
+
+    private function enrichInventoryHolding(array $entry, array $marketIndex): array
+    {
+        $marketItem = $marketIndex[$entry['market_hash_name']] ?? null;
+        $signal = $this->buildInventorySellSignal($marketItem, $entry);
+        $currentPrice = isset($marketItem['current_price']) ? (float) $marketItem['current_price'] : null;
+
+        return [
+            'profile_id' => $entry['profile_id'],
+            'asset_id' => $entry['asset_id'],
+            'class_id' => $entry['class_id'],
+            'instance_id' => $entry['instance_id'],
+            'id' => $marketItem['id'] ?? $this->idFromName($entry['market_hash_name']),
+            'market_hash_name' => $entry['market_hash_name'],
+            'name' => $entry['name'],
+            'amount' => $entry['amount'],
+            'tradable' => $entry['tradable'],
+            'marketable' => $entry['marketable'],
+            'commodity' => $entry['commodity'],
+            'image_url' => $marketItem['image_url'] ?? $entry['image_url'],
+            'item_page' => $marketItem['item_page'] ?? $entry['item_page'],
+            'market_page' => $marketItem['market_page'] ?? null,
+            'current_price_eur' => $currentPrice,
+            'buy_price_eur' => 0.0,
+            'interest_score' => $marketItem['interest_score'] ?? null,
+            'change_vs_yesterday_pct' => $marketItem['change_vs_yesterday_pct'] ?? null,
+            'change_vs_7d_pct' => $marketItem['change_vs_7d_pct'] ?? null,
+            'sales_24h_volume' => $marketItem['sales_24h_volume'] ?? null,
+            'volume_ratio_24h_7d' => $marketItem['volume_ratio_24h_7d'] ?? null,
+            'sell_signal' => $signal['key'],
+            'sell_label' => $signal['label'],
+            'sell_priority' => $signal['priority'],
+            'sell_reasons' => $signal['reasons'],
+            'primary_reason' => $signal['reasons'][0] ?? 'Item importe depuis Steam.',
+            'imported_at' => $entry['imported_at'],
+        ];
+    }
+
+    private function buildInventorySellSignal(?array $marketItem, array $entry): array
+    {
+        if ($marketItem === null) {
+            return [
+                'key' => 'watch_sell',
+                'label' => 'Surveiller',
+                'priority' => 52,
+                'reasons' => ['Item importe mais absent du radar marche actuel: impossible de produire un signal fort.'],
+            ];
+        }
+
+        $change24 = isset($marketItem['change_vs_yesterday_pct']) ? (float) $marketItem['change_vs_yesterday_pct'] : null;
+        $change7 = isset($marketItem['change_vs_7d_pct']) ? (float) $marketItem['change_vs_7d_pct'] : null;
+        $score = (int) ($marketItem['interest_score'] ?? 0);
+        $volume24 = (int) ($marketItem['sales_24h_volume'] ?? 0);
+        $volumeRatio = isset($marketItem['volume_ratio_24h_7d']) ? (float) $marketItem['volume_ratio_24h_7d'] : null;
+        $reasons = [];
+
+        if (($change7 ?? 0.0) >= 12.0 && ($change24 ?? 0.0) <= 0.0) {
+            $reasons[] = 'Le skin reste bien au-dessus de sa moyenne 7 jours mais le 24h se tasse: fenetre de vente a etudier.';
+            return ['key' => 'sell_now', 'label' => 'Vendre', 'priority' => 86, 'reasons' => $reasons];
+        }
+
+        if (($change24 ?? 0.0) >= 10.0 && $volume24 <= 1) {
+            $reasons[] = 'Pic violent sur tres faible volume: possible faux signal, attention a la sortie.';
+            return ['key' => 'watch_sell', 'label' => 'Surveiller', 'priority' => 74, 'reasons' => $reasons];
+        }
+
+        if ($score >= 60 && ($change7 ?? 0.0) < 0 && ($volumeRatio ?? 0.0) >= 1.2) {
+            $reasons[] = 'Le marche reste actif et l item conserve un potentiel de rebond: pas de vente immediate.';
+            return ['key' => 'hold', 'label' => 'Garder', 'priority' => 38, 'reasons' => $reasons];
+        }
+
+        if ($score < 45 || (($volumeRatio ?? 1.0) < 0.8 && $volume24 <= 1)) {
+            $reasons[] = 'Liquidite faible ou signal marche mediocre: surveiller une vente opportuniste.';
+            return ['key' => 'watch_sell', 'label' => 'Surveiller', 'priority' => 62, 'reasons' => $reasons];
+        }
+
+        $reasons[] = 'Pas de signal de sortie dominant sur cet item importe.';
+        return ['key' => 'hold', 'label' => 'Garder', 'priority' => 34, 'reasons' => $reasons];
     }
 
     private function wearLabelFromFloat(?float $float): ?string
@@ -1719,6 +2038,156 @@ final class RadarService
         }
 
         return $url;
+    }
+
+    private function findProfileById(string $profileId): ?array
+    {
+        foreach ($this->readProfileEntries() as $profile) {
+            if (($profile['profile_id'] ?? null) === $profileId) {
+                return $profile;
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveSteamId64FromProfileUrl(string $url): string
+    {
+        $parts = parse_url($url);
+        $path = trim((string) ($parts['path'] ?? ''), '/');
+        $segments = $path === '' ? [] : explode('/', $path);
+
+        if (($segments[0] ?? null) === 'profiles' && isset($segments[1]) && preg_match('/^\d{17}$/', $segments[1]) === 1) {
+            return $segments[1];
+        }
+
+        if (($segments[0] ?? null) === 'inventory' && isset($segments[1]) && preg_match('/^\d{17}$/', $segments[1]) === 1) {
+            return $segments[1];
+        }
+
+        $xmlUrl = rtrim($url, '/') . '/?xml=1';
+        $xml = $this->fetchRawUrl($xmlUrl, ['Accept: application/xml, text/xml']);
+        if (preg_match('/<steamID64><!\[CDATA\[(\d{17})\]\]><\/steamID64>/', $xml, $matches) === 1) {
+            return $matches[1];
+        }
+        if (preg_match('/<steamID64>(\d{17})<\/steamID64>/', $xml, $matches) === 1) {
+            return $matches[1];
+        }
+
+        throw new RuntimeException('Impossible de resoudre le SteamID64 depuis ce profil. Verifie que le profil est public.');
+    }
+
+    private function fetchSteamInventory(string $steamId64): array
+    {
+        $startAssetId = null;
+        $assets = [];
+        $descriptions = [];
+
+        do {
+            $url = sprintf(
+                'https://steamcommunity.com/inventory/%s/730/2?l=french&count=2000%s',
+                rawurlencode($steamId64),
+                $startAssetId !== null ? '&start_assetid=' . rawurlencode($startAssetId) : ''
+            );
+
+            $payload = $this->fetchJsonWithCurl($url, [
+                'Accept: application/json, text/plain, */*',
+            ], 60);
+
+            if (($payload['success'] ?? false) !== true) {
+                throw new RuntimeException('Steam a refuse l acces a l inventaire. Le profil doit etre public.');
+            }
+
+            $assets = array_merge($assets, $payload['assets'] ?? []);
+            $descriptions = array_merge($descriptions, $payload['descriptions'] ?? []);
+            $startAssetId = isset($payload['more_items']) && $payload['more_items']
+                ? (string) ($payload['last_assetid'] ?? '')
+                : null;
+        } while ($startAssetId !== null && $startAssetId !== '');
+
+        return [
+            'assets' => $assets,
+            'descriptions' => $descriptions,
+        ];
+    }
+
+    private function mapSteamInventoryItems(array $inventory, string $profileId, array $profile): array
+    {
+        $descriptions = [];
+        foreach (($inventory['descriptions'] ?? []) as $description) {
+            $key = (string) ($description['classid'] ?? '') . '_' . (string) ($description['instanceid'] ?? '');
+            if ($key === '_') {
+                continue;
+            }
+            $descriptions[$key] = $description;
+        }
+
+        $items = [];
+        foreach (($inventory['assets'] ?? []) as $asset) {
+            $key = (string) ($asset['classid'] ?? '') . '_' . (string) ($asset['instanceid'] ?? '');
+            $description = $descriptions[$key] ?? null;
+            if (!is_array($description)) {
+                continue;
+            }
+
+            $marketHashName = trim((string) ($description['market_hash_name'] ?? ''));
+            if ($marketHashName === '') {
+                continue;
+            }
+
+            $items[] = [
+                'profile_id' => $profileId,
+                'asset_id' => trim((string) ($asset['assetid'] ?? '')),
+                'class_id' => trim((string) ($asset['classid'] ?? '')),
+                'instance_id' => trim((string) ($asset['instanceid'] ?? '')),
+                'market_hash_name' => $marketHashName,
+                'name' => trim((string) ($description['name'] ?? $marketHashName)) ?: $marketHashName,
+                'amount' => max(1, (int) ($asset['amount'] ?? 1)),
+                'tradable' => isset($description['tradable']) ? ((int) $description['tradable'] === 1) : true,
+                'marketable' => isset($description['marketable']) ? ((int) $description['marketable'] === 1) : true,
+                'commodity' => isset($description['commodity']) ? ((int) $description['commodity'] === 1) : false,
+                'image_url' => $this->steamImageUrl((string) ($description['icon_url'] ?? '')),
+                'item_page' => $profile['steam_profile_url'] ?? null,
+                'imported_at' => date(DATE_ATOM),
+            ];
+        }
+
+        return $items;
+    }
+
+    private function steamImageUrl(string $iconPath): ?string
+    {
+        $iconPath = trim($iconPath);
+        if ($iconPath === '') {
+            return null;
+        }
+
+        return 'https://community.akamai.steamstatic.com/economy/image/' . ltrim($iconPath, '/');
+    }
+
+    private function fetchRawUrl(string $url, array $headers = [], int $timeout = 60): string
+    {
+        $handle = curl_init($url);
+        curl_setopt_array($handle, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_HTTPHEADER => array_merge([
+                'User-Agent: CS2 Market Daily Radar',
+            ], $headers),
+        ]);
+
+        $response = curl_exec($handle);
+        if ($response === false) {
+            throw new RuntimeException('Curl request failed: ' . curl_error($handle));
+        }
+
+        $statusCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        if ($statusCode >= 400) {
+            throw new RuntimeException(sprintf('Unexpected HTTP status %d for %s', $statusCode, $url));
+        }
+
+        return (string) $response;
     }
 
     private function findMarketItemById(int $itemId): ?array
@@ -2099,7 +2568,7 @@ PS1;
 
         file_put_contents($path, $json);
 
-        if ($path !== $this->stateFile) {
+        if ($path !== $this->stateFile && !$this->buildingCanonicalState) {
             $this->refreshStateFile();
         }
     }
@@ -2125,13 +2594,20 @@ PS1;
 
     private function refreshStateFile(): void
     {
-        $state = $this->buildCanonicalState();
-        $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        if ($json === false) {
-            return;
-        }
+        $previous = $this->buildingCanonicalState;
+        $this->buildingCanonicalState = true;
 
-        file_put_contents($this->stateFile, $json);
+        try {
+            $state = $this->buildCanonicalState();
+            $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            if ($json === false) {
+                return;
+            }
+
+            file_put_contents($this->stateFile, $json);
+        } finally {
+            $this->buildingCanonicalState = $previous;
+        }
     }
 
     private function buildCanonicalState(): array
@@ -2152,6 +2628,8 @@ PS1;
         $positionsMeta = $positions['meta'] ?? [];
         $profiles = $this->profiles();
         $profileRows = $profiles['data'] ?? [];
+        $inventory = $this->profileInventory();
+        $inventoryRows = $inventory['data'] ?? [];
 
         return [
             'generated_at' => date(DATE_ATOM),
@@ -2178,6 +2656,7 @@ PS1;
                 'positions_count' => $positionsMeta['total'] ?? count($positionRows),
                 'positions_ready_to_sell_count' => $positionsMeta['ready_to_sell'] ?? 0,
                 'profiles_count' => count($profileRows),
+                'inventory_items_count' => count($inventoryRows),
             ],
             'catalog' => $catalog,
             'market' => $market,
@@ -2186,6 +2665,7 @@ PS1;
             'watchlist' => $watchlist,
             'positions' => array_slice($positionRows, 0, 40),
             'profiles' => array_slice($profileRows, 0, 20),
+            'inventory' => array_slice($inventoryRows, 0, 80),
             'jobs' => $jobs,
             'csfloat' => $csfloat,
         ];
@@ -2223,6 +2703,7 @@ PS1;
             'watchlist' => array_slice($state['watchlist'] ?? [], 0, 15),
             'positions' => array_slice($state['positions'] ?? [], 0, 15),
             'profiles' => array_slice($state['profiles'] ?? [], 0, 10),
+            'inventory' => array_slice($state['inventory'] ?? [], 0, 20),
             'recent_jobs' => array_slice($state['jobs'] ?? [], 0, 8),
             'stats' => $state['stats'] ?? [],
         ];
@@ -2260,6 +2741,7 @@ PS1;
             'watchlist' => array_slice($state['watchlist'] ?? [], 0, 20),
             'positions' => array_slice($state['positions'] ?? [], 0, 20),
             'profiles' => array_slice($state['profiles'] ?? [], 0, 10),
+            'inventory' => array_slice($state['inventory'] ?? [], 0, 40),
             'recent_jobs' => array_slice($state['jobs'] ?? [], 0, 10),
             'csfloat_signals_sample' => array_slice($state['csfloat']['signals'] ?? [], 0, 20),
         ];
