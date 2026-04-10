@@ -413,6 +413,66 @@ final class RadarService
         ];
     }
 
+    public function profile(string $profileId): array
+    {
+        $profile = $this->findProfileById($profileId);
+        if ($profile === null) {
+            throw new RuntimeException('Profil introuvable.');
+        }
+
+        if (
+            !$this->buildingCanonicalState
+            && is_string($profile['steam_profile_url'] ?? null)
+            && trim((string) $profile['steam_profile_url']) !== ''
+            && empty($profile['inventory_synced_at'])
+        ) {
+            try {
+                $this->syncProfileInventory($profileId);
+            } catch (\Throwable $exception) {
+                $entries = $this->readProfileEntries();
+                foreach ($entries as &$candidate) {
+                    if (($candidate['profile_id'] ?? null) !== $profileId) {
+                        continue;
+                    }
+
+                    $candidate['inventory_error'] = $exception->getMessage();
+                    $candidate['updated_at'] = date(DATE_ATOM);
+                }
+                unset($candidate);
+                $this->writeProfileEntries($entries);
+            }
+
+            $profile = $this->findProfileById($profileId) ?? $profile;
+        }
+
+        $positions = array_values(array_filter(
+            $this->positions()['data'] ?? [],
+            static fn (array $position): bool => ($position['profile_id'] ?? null) === $profileId
+        ));
+        $inventory = $this->profileInventory($profileId)['data'] ?? [];
+        $detail = $this->buildProfilePortfolio($profile, $positions, $inventory);
+        $analysisRows = $positions !== [] ? $positions : $inventory;
+
+        $detail['positions'] = $positions;
+        $detail['inventory_items'] = $inventory;
+        $detail['analysis_rows'] = $analysisRows;
+        $detail['analysis_total'] = count($analysisRows);
+        $detail['ready_to_sell_items'] = array_values(array_filter(
+            $analysisRows,
+            static fn (array $row): bool => ($row['sell_signal'] ?? '') === 'sell_now'
+        ));
+        $detail['watch_items'] = array_values(array_filter(
+            $analysisRows,
+            static fn (array $row): bool => ($row['sell_signal'] ?? '') === 'watch_sell'
+        ));
+        $detail['keep_items'] = array_values(array_filter(
+            $analysisRows,
+            static fn (array $row): bool => ($row['sell_signal'] ?? '') === 'hold'
+        ));
+
+        return $detail;
+    }
+
     public function profileInventory(?string $profileId = null): array
     {
         $marketIndex = [];

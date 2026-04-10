@@ -362,6 +362,50 @@
           </div>
         </section>
 
+        <section class="view" data-view="portfolio">
+          <div class="section-heading">
+            <div>
+              <h3>Portefeuille</h3>
+              <p id="portfolio-subtitle">Lecture complete d un profil: inventaire, signaux keep / watch / sell et valeur suivie.</p>
+            </div>
+          </div>
+
+          <div class="kpi-grid" id="portfolio-kpis"></div>
+
+          <div class="dashboard-layout portfolio-layout">
+            <article class="panel">
+              <div class="card-header">
+                <div>
+                  <h4 id="portfolio-table-title">Items du portefeuille</h4>
+                  <p id="portfolio-table-copy">Chargement du portefeuille selectionne.</p>
+                </div>
+                <div class="chip-row">
+                  <span class="pill" id="portfolio-mode-pill">-</span>
+                  <span class="pill pill-outline" id="portfolio-count-pill">0 item</span>
+                </div>
+              </div>
+              <div class="table-list" id="portfolio-items-table"></div>
+            </article>
+
+            <div class="section-block">
+              <article class="panel">
+                <div class="card-header"><div><h4>A vendre vite</h4><p>Items avec signal de sortie prioritaire.</p></div></div>
+                <div class="table-list" id="portfolio-urgent-table"></div>
+              </article>
+
+              <article class="panel">
+                <div class="card-header"><div><h4>A surveiller</h4><p>Fenetre de vente ou momentum a confirmer.</p></div></div>
+                <div class="table-list" id="portfolio-watch-table"></div>
+              </article>
+
+              <article class="panel">
+                <div class="card-header"><div><h4>Meta profil</h4><p>Rappels utiles pour piloter ce portefeuille.</p></div></div>
+                <div class="table-list" id="portfolio-meta-table"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
         <section class="view" data-view="admin">
           <div class="section-heading">
             <div>

@@ -76,6 +76,11 @@ final class Application
                 return;
             }
 
+            if ($method === 'GET' && preg_match('#^/api/profiles/(?P<id>[^/]+)$#', $path, $matches) === 1) {
+                JsonResponse::send($this->publicController()->profile((string) $matches['id']));
+                return;
+            }
+
             if ($method === 'POST' && $path === '/api/profiles') {
                 JsonResponse::send($this->publicController()->saveProfile($this->readJsonBody()));
                 return;

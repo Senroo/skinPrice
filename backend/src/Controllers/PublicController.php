@@ -53,6 +53,11 @@ final class PublicController
         return $this->radarService->profiles();
     }
 
+    public function profile(string $profileId): array
+    {
+        return $this->radarService->profile($profileId);
+    }
+
     public function saveProfile(array $payload): array
     {
         return $this->radarService->saveProfile($payload);

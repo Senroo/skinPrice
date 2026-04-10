@@ -10,6 +10,7 @@ const state = {
   watchlist: null,
   positions: null,
   profiles: null,
+  profileDetail: null,
   filteredItems: [],
   filteredMeta: null,
   skinAdvisorMessages: [],
@@ -103,6 +104,8 @@ const knownItems = () => [
   ...(state.reportToday?.top_volume ?? []),
   ...(state.watchlist?.data ?? []),
   ...(state.positions?.data ?? []),
+  ...(state.profileDetail?.positions ?? []),
+  ...(state.profileDetail?.inventory_items ?? []),
   ...(state.filteredItems ?? []),
   ...(state.item?.positions ?? []),
   ...(state.item ? [state.item] : []),
@@ -766,8 +769,8 @@ const renderProfiles = () => {
           .map(
             (profile) => `
             <article class="table-item">
-              <div class="table-item-main">
-                <strong>${escapeHtml(profile.name)}</strong>
+                <div class="table-item-main">
+                  <strong><button class="item-name-link" type="button" data-open-profile="${escapeHtml(profile.profile_id)}">${escapeHtml(profile.name)}</button></strong>
                 <span class="table-meta">${escapeHtml(profile.summary ?? "")}</span>
                 <div class="badge-row">
                   <span class="badge">${escapeHtml(strategyLabel(profile.strategy ?? "balanced"))}</span>
@@ -776,6 +779,7 @@ const renderProfiles = () => {
                 </div>
                 ${profile.note ? `<span class="table-meta">${escapeHtml(profile.note)}</span>` : ""}
                 <div class="item-link-row">
+                  <button class="item-link item-link-button" type="button" data-open-profile="${escapeHtml(profile.profile_id)}">Voir portefeuille</button>
                   ${profile.steam_profile_url ? `<a class="item-link" href="${escapeHtml(profile.steam_profile_url)}" target="_blank" rel="noreferrer">Voir profil Steam</a>` : ""}
                   ${profile.discord_webhook_url ? `<span class="item-link">Discord profilé</span>` : ""}
                   <button class="item-link item-link-button item-link-danger" type="button" data-delete-profile="${escapeHtml(profile.profile_id)}">Supprimer</button>
@@ -854,6 +858,158 @@ const enhanceProfileCards = () => {
       actions.insertBefore(syncButton, actions.querySelector("[data-delete-profile]"));
     }
   });
+};
+
+const renderPortfolioRows = (rows, emptyText) =>
+  rows.length > 0
+    ? rows
+        .map(
+          (item) => `
+          <article class="table-item">
+            <div class="table-item-main table-item-with-image">
+              ${itemVisual(item, { label: item.name })}
+              <div class="table-item-copy">
+                ${itemNameMarkup(item)}
+                <span class="table-meta">${escapeHtml(item.primary_reason ?? "Item portefeuille")}</span>
+                <span class="table-meta">24h ${pct(item.change_vs_yesterday_pct)} • 7j ${pct(item.change_vs_7d_pct)} • volume ${escapeHtml(String(item.sales_24h_volume ?? 0))}</span>
+                <div class="badge-row">
+                  <span class="badge ${positionSignalClass(item.sell_signal)}">${escapeHtml(item.sell_label ?? "Garder")}</span>
+                  ${item.amount ? `<span class="badge">x${escapeHtml(String(item.amount))}</span>` : ""}
+                  ${item.interest_score != null ? `<span class="badge">score ${escapeHtml(String(item.interest_score))}</span>` : ""}
+                  ${item.marketable === false ? `<span class="badge">non marketable</span>` : ""}
+                </div>
+                ${itemActions(item)}
+              </div>
+            </div>
+            <div class="value-stack">
+              <strong>${euro(item.current_price_eur ?? item.current_price)}</strong>
+              <span class="table-meta">${escapeHtml(item.sell_signal === "sell_now" ? "sortie prioritaire" : item.sell_signal === "watch_sell" ? "surveillance" : "keep")}</span>
+            </div>
+          </article>
+        `
+        )
+        .join("")
+    : `
+      <article class="table-item">
+        <div class="table-item-main">
+          <strong>Aucun item dans ce portefeuille</strong>
+          <span class="table-meta">${escapeHtml(emptyText)}</span>
+        </div>
+      </article>
+    `;
+
+const renderPortfolioDetail = () => {
+  const detail = state.profileDetail;
+  const subtitle = document.getElementById("portfolio-subtitle");
+  const kpis = document.getElementById("portfolio-kpis");
+  const tableTitle = document.getElementById("portfolio-table-title");
+  const tableCopy = document.getElementById("portfolio-table-copy");
+  const modePill = document.getElementById("portfolio-mode-pill");
+  const countPill = document.getElementById("portfolio-count-pill");
+  const itemsTable = document.getElementById("portfolio-items-table");
+  const urgentTable = document.getElementById("portfolio-urgent-table");
+  const watchTable = document.getElementById("portfolio-watch-table");
+  const metaTable = document.getElementById("portfolio-meta-table");
+  const sectionHeading = document.querySelector('[data-view="portfolio"] .section-heading');
+
+  if (!detail || !kpis || !itemsTable || !urgentTable || !watchTable || !metaTable) {
+    return;
+  }
+
+  let backButton = document.getElementById("portfolio-back-button");
+  if (!backButton && sectionHeading) {
+    backButton = document.createElement("button");
+    backButton.id = "portfolio-back-button";
+    backButton.type = "button";
+    backButton.className = "item-link item-link-button";
+    sectionHeading.appendChild(backButton);
+  }
+
+  if (backButton) {
+    const targetView = state.lastNonItemView || "dashboard";
+    const labels = {
+      dashboard: "Retour dashboard",
+      report: "Retour rapport",
+      history: "Retour historique",
+      item: "Retour item",
+      admin: "Retour admin",
+    };
+    backButton.textContent = labels[targetView] ?? "Retour";
+    backButton.onclick = () => activateView(targetView);
+  }
+
+  if (subtitle) {
+    subtitle.textContent = detail.summary ?? "Lecture complete du portefeuille selectionne.";
+  }
+  if (tableTitle) {
+    tableTitle.textContent = detail.analysis_mode === "inventory" ? "Items importes depuis Steam" : "Positions suivies";
+  }
+  if (tableCopy) {
+    tableCopy.textContent = detail.analysis_mode === "inventory"
+      ? "Analyse keep / watch / sell sur l inventaire importe."
+      : "Analyse keep / watch / sell sur les positions avec prix d entree.";
+  }
+  if (modePill) {
+    modePill.textContent = detail.analysis_mode === "inventory" ? "Mode inventaire" : "Mode positions";
+  }
+  if (countPill) {
+    countPill.textContent = `${detail.analysis_total ?? 0} item${(detail.analysis_total ?? 0) > 1 ? "s" : ""}`;
+  }
+
+  kpis.innerHTML = [
+    { label: "Valeur suivie", value: euro(detail.portfolio_value_eur), meta: `${detail.ready_to_sell_count ?? 0} sell maintenant` },
+    { label: "A surveiller", value: String(detail.watch_count ?? 0), meta: `${detail.keep_count ?? 0} keep` },
+    { label: "PnL latent", value: detail.pnl_pct == null ? "n/a" : pct(detail.pnl_pct), meta: `cout ${euro(detail.cost_basis_eur)}` },
+    { label: "Inventaire", value: String(detail.inventory_items_count ?? 0), meta: `${detail.manual_positions_count ?? 0} positions manuelles` },
+  ]
+    .map(
+      (card) => `
+        <article class="kpi-card panel">
+          <span class="kpi-label">${escapeHtml(card.label)}</span>
+          <div class="portfolio-kpi-copy">
+            <strong>${escapeHtml(card.value)}</strong>
+            <span class="kpi-trend neutral">${escapeHtml(card.meta)}</span>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+
+  itemsTable.innerHTML = renderPortfolioRows(
+    detail.analysis_rows ?? [],
+    "Synchronise l inventaire Steam ou ajoute une position pour voir les items ici."
+  );
+  urgentTable.innerHTML = renderPortfolioRows(
+    detail.ready_to_sell_items ?? [],
+    "Aucun item n a de signal de vente immediate pour le moment."
+  );
+  watchTable.innerHTML = renderPortfolioRows(
+    detail.watch_items ?? [],
+    "Rien de sensible a surveiller maintenant."
+  );
+
+  metaTable.innerHTML = `
+    <div class="portfolio-meta-grid">
+      <article class="table-item">
+        <div class="table-item-main">
+          <strong>${escapeHtml(detail.name ?? "Profil")}</strong>
+          <span class="table-meta">${escapeHtml(strategyLabel(detail.strategy ?? "balanced"))}</span>
+          <span class="table-meta">${escapeHtml(detail.note ?? "Aucune note profil.")}</span>
+          <div class="item-link-row">
+            ${detail.steam_profile_url ? `<a class="item-link" href="${escapeHtml(detail.steam_profile_url)}" target="_blank" rel="noreferrer">Voir profil Steam</a>` : ""}
+            ${detail.discord_webhook_url ? `<span class="item-link">Webhook Discord actif</span>` : ""}
+          </div>
+        </div>
+      </article>
+      <article class="table-item">
+        <div class="table-item-main">
+          <strong>Sync inventaire</strong>
+          <span class="table-meta">${escapeHtml(detail.inventory_synced_at ? `dernier sync ${String(detail.inventory_synced_at).slice(0, 16).replace("T", " ")}` : "aucun sync inventaire enregistre")}</span>
+          ${detail.inventory_error ? `<span class="table-meta negative">${escapeHtml(detail.inventory_error)}</span>` : `<span class="table-meta">Aucune erreur de sync sur ce profil.</span>`}
+        </div>
+      </article>
+    </div>
+  `;
 };
 
 const populateProfileSelect = () => {
@@ -1171,6 +1327,20 @@ const openItemView = async (itemId) => {
   activateView("item");
 };
 
+const openProfileView = async (profileId) => {
+  if (!profileId) {
+    return;
+  }
+
+  if (state.activeView && state.activeView !== "portfolio") {
+    state.lastNonItemView = state.activeView;
+  }
+
+  state.profileDetail = await fetchJson(`/api/profiles/${encodeURIComponent(profileId)}`);
+  renderPortfolioDetail();
+  activateView("portfolio");
+};
+
 const bindItemOpenActions = () => {
   document.addEventListener("click", async (event) => {
     const target = event.target;
@@ -1196,6 +1366,39 @@ const bindItemOpenActions = () => {
         feedback.textContent = "Chargement de la fiche item...";
       }
       await openItemView(itemId);
+    } catch (error) {
+      if (feedback) {
+        feedback.textContent = error.message;
+      }
+    }
+  });
+};
+
+const bindProfileOpenActions = () => {
+  document.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const button = target.closest("[data-open-profile]");
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+
+    const profileId = button.dataset.openProfile;
+    if (!profileId) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const feedback = document.getElementById("profile-feedback") ?? document.getElementById("job-feedback");
+    try {
+      if (feedback) {
+        feedback.textContent = "Chargement du portefeuille...";
+      }
+      await openProfileView(profileId);
     } catch (error) {
       if (feedback) {
         feedback.textContent = error.message;
@@ -1302,6 +1505,7 @@ const renderItemLinked = () => {
       dashboard: "Retour dashboard",
       report: "Retour rapport",
       history: "Retour historique",
+      portfolio: "Retour portefeuille",
       admin: "Retour admin",
     };
     backButton.textContent = labels[targetView] ?? "Retour";
@@ -1334,6 +1538,7 @@ const renderAll = () => {
   renderWatchlistLinked();
   renderPositions();
   renderProfiles();
+  renderPortfolioDetail();
   populateProfileSelect();
   renderFilteredItems();
   renderSkinAdvisor();
@@ -1352,6 +1557,7 @@ const renderAll = () => {
 const loadData = async () => {
   const activeFilters = document.getElementById("filter-form") ? readFilterValues() : defaultFilterValues;
   const currentItemId = state.item?.id ?? null;
+  const currentProfileId = state.profileDetail?.profile_id ?? null;
   const [overview, reportToday, reportHistory, health, jobs, watchlist, positions, profiles, items, filteredItems] = await Promise.all([
     fetchJson("/api/dashboard/overview"),
     fetchJson("/api/reports/today"),
@@ -1368,6 +1574,8 @@ const loadData = async () => {
   const fallbackItem = items.data?.[0] ?? null;
   const itemIdToLoad = currentItemId ?? fallbackItem?.id ?? null;
   const item = itemIdToLoad ? await fetchJson(`/api/items/${itemIdToLoad}`) : null;
+  const hasActiveProfile = currentProfileId && (profiles.data ?? []).some((profile) => profile.profile_id === currentProfileId);
+  const profileDetail = hasActiveProfile ? await fetchJson(`/api/profiles/${encodeURIComponent(currentProfileId)}`) : null;
 
   Object.assign(state, {
     overview,
@@ -1379,6 +1587,7 @@ const loadData = async () => {
     watchlist,
     positions,
     profiles,
+    profileDetail,
     filteredItems: filteredItems.data ?? [],
     filteredMeta: filteredItems.meta ?? null,
   });
@@ -1745,6 +1954,7 @@ const init = async () => {
   bindViews();
   bindAdminActions();
   bindItemOpenActions();
+  bindProfileOpenActions();
   bindFilterPanel();
   bindSkinAdvisor();
   bindPositionForm();
