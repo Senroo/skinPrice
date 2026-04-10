@@ -2094,8 +2094,15 @@ final class RadarService
                 'Accept: application/json, text/plain, */*',
             ], 60);
 
-            if (($payload['success'] ?? false) !== true) {
-                throw new RuntimeException('Steam a refuse l acces a l inventaire. Le profil doit etre public.');
+            $success = $payload['success'] ?? false;
+            $isSuccess = $success === true || $success === 1 || $success === '1';
+            if (!$isSuccess) {
+                $error = trim((string) ($payload['Error'] ?? $payload['error'] ?? ''));
+                throw new RuntimeException(
+                    $error !== ''
+                        ? 'Steam inventory error: ' . $error
+                        : 'Steam a refuse l acces a l inventaire. Le profil doit etre public.'
+                );
             }
 
             $assets = array_merge($assets, $payload['assets'] ?? []);
