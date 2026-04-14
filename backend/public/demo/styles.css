@@ -704,18 +704,44 @@ button { border: 0; }
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
+  .nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .nav-link {
+    text-align: center;
+    padding: 12px 10px;
+  }
   .hero { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
   .main,
   .sidebar { padding: 18px; }
+  .hero { padding: 18px; }
+  .hero-metrics { grid-template-columns: 1fr; }
+  .section-heading { align-items: start; }
+  .chip-row,
+  .badge-row { gap: 6px; }
+  .chip,
+  .badge,
+  .pill { padding: 6px 10px; font-size: 0.82rem; }
   .signal-item,
   .opportunity-top,
   .table-item { grid-template-columns: 1fr; }
+  .item-hero { grid-template-columns: 1fr; text-align: left; }
+  .item-shot { justify-items: start; }
   .filter-grid,
   .position-form-grid,
-  .kpi-grid { grid-template-columns: 1fr; }
+  .kpi-grid,
+  .dashboard-layout,
+  .summary-panel,
+  .portfolio-layout,
+  .triple-grid { grid-template-columns: 1fr; }
   .value-stack,
   .signal-score { text-align: left; }
+  .table-item { gap: 10px; }
+  .table-item-main strong { font-size: 0.98rem; }
+  .item-link-row { gap: 6px; }
+  .item-link { padding: 5px 9px; }
 }
