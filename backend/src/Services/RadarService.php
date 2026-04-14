@@ -2996,28 +2996,46 @@ PS1;
                     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 ],
             ],
-            'tools' => [
-                [
-                    'type' => 'openrouter:web_search',
-                    'parameters' => [
-                        'max_results' => 5,
-                        'max_total_results' => 10,
-                        'search_context_size' => 'medium',
-                    ],
+        ];
+
+        $tools = [
+            [
+                'type' => 'openrouter:web_search',
+                'parameters' => [
+                    'max_results' => 5,
+                    'max_total_results' => 10,
+                    'search_context_size' => 'medium',
                 ],
             ],
         ];
 
-        $response = $this->postJsonWithCurl(
-            'https://openrouter.ai/api/v1/chat/completions',
-            $payload,
-            [
-                'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
-                'HTTP-Referer: https://cs2-market-daily-radar.local',
-                'X-Title: CS2 Market Daily Radar',
-            ],
-            $this->openRouterTimeoutSeconds()
-        );
+        $headers = [
+            'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
+            'HTTP-Referer: https://cs2-market-daily-radar.local',
+            'X-Title: CS2 Market Daily Radar',
+        ];
+
+        try {
+            $payloadWithTools = $payload;
+            $payloadWithTools['tools'] = $tools;
+            $response = $this->postJsonWithCurl(
+                'https://openrouter.ai/api/v1/chat/completions',
+                $payloadWithTools,
+                $headers,
+                $this->openRouterTimeoutSeconds()
+            );
+        } catch (\Throwable $exception) {
+            if (!$this->isTimeoutError($exception->getMessage())) {
+                throw $exception;
+            }
+
+            $response = $this->postJsonWithCurl(
+                'https://openrouter.ai/api/v1/chat/completions',
+                $payload,
+                $headers,
+                $this->openRouterFallbackTimeoutSeconds()
+            );
+        }
 
         $content = $this->extractAssistantContent($response);
         $decoded = $this->decodeJsonObject($content);
@@ -3068,28 +3086,46 @@ PS1;
                     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 ],
             ],
-            'tools' => [
-                [
-                    'type' => 'openrouter:web_search',
-                    'parameters' => [
-                        'max_results' => 4,
-                        'max_total_results' => 8,
-                        'search_context_size' => 'medium',
-                    ],
+        ];
+
+        $tools = [
+            [
+                'type' => 'openrouter:web_search',
+                'parameters' => [
+                    'max_results' => 4,
+                    'max_total_results' => 8,
+                    'search_context_size' => 'medium',
                 ],
             ],
         ];
 
-        $response = $this->postJsonWithCurl(
-            'https://openrouter.ai/api/v1/chat/completions',
-            $payload,
-            [
-                'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
-                'HTTP-Referer: https://cs2-market-daily-radar.local',
-                'X-Title: CS2 Market Daily Radar Skin Advisor',
-            ],
-            $this->openRouterTimeoutSeconds()
-        );
+        $headers = [
+            'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
+            'HTTP-Referer: https://cs2-market-daily-radar.local',
+            'X-Title: CS2 Market Daily Radar Skin Advisor',
+        ];
+
+        try {
+            $payloadWithTools = $payload;
+            $payloadWithTools['tools'] = $tools;
+            $response = $this->postJsonWithCurl(
+                'https://openrouter.ai/api/v1/chat/completions',
+                $payloadWithTools,
+                $headers,
+                $this->openRouterTimeoutSeconds()
+            );
+        } catch (\Throwable $exception) {
+            if (!$this->isTimeoutError($exception->getMessage())) {
+                throw $exception;
+            }
+
+            $response = $this->postJsonWithCurl(
+                'https://openrouter.ai/api/v1/chat/completions',
+                $payload,
+                $headers,
+                $this->openRouterFallbackTimeoutSeconds()
+            );
+        }
 
         $content = $this->extractAssistantContent($response);
         $decoded = $this->decodeJsonObject($content);
@@ -3980,6 +4016,11 @@ PS1;
         return 15;
     }
 
+    private function openRouterFallbackTimeoutSeconds(): int
+    {
+        return max(8, min(20, $this->openRouterTimeoutSeconds()));
+    }
+
     private function normalizeAiErrorMessage(string $message): string
     {
         $normalized = trim($message);
@@ -4001,6 +4042,12 @@ PS1;
         }
 
         return $normalized;
+    }
+
+    private function isTimeoutError(string $message): bool
+    {
+        $lower = strtolower($message);
+        return str_contains($lower, 'timed out') || str_contains($lower, 'timeout');
     }
 
     private function discordWebhookIsConfigured(): bool
