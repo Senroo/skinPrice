@@ -430,15 +430,16 @@
                   <p>Déclenchement manuel des jobs live.</p>
                 </div>
               </div>
-              <div class="badge-row">
-                <button class="action-button" data-job="sync-catalog">Sync catalog</button>
-                <button class="action-button" data-job="sync-market">Sync market</button>
-                <button class="action-button" data-job="sync-csfloat">Sync CSFloat</button>
-                <button class="action-button" data-job="generate-report">Generate report</button>
+                <div class="badge-row">
+                  <button class="action-button" data-job="sync-catalog">Sync catalog</button>
+                  <button class="action-button" data-job="sync-market">Sync market</button>
+                  <button class="action-button" data-job="sync-csfloat">Sync CSFloat</button>
+                  <button class="action-button" data-job="generate-report">Generate report</button>
                   <button class="action-button action-button-secondary" data-job="send-discord-report">Send Discord report</button>
+                  <button class="action-button action-button-secondary" data-job="refresh-all">Refresh 2h</button>
                   <button class="action-button action-button-secondary" id="openrouter-test">Tester OpenRouter</button>
                   <button class="action-button action-button-secondary" id="refresh-live">Refresh UI</button>
-              </div>
+                </div>
               <p class="table-meta" id="job-feedback">Les jobs écrivent dans le stockage local et mettent l'UI à jour.</p>
                 <p class="table-meta" id="market-cooldown"></p>
                 <p class="table-meta" id="openrouter-feedback"></p>

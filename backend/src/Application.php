@@ -146,6 +146,11 @@ final class Application
                 return;
             }
 
+            if ($method === 'POST' && $path === '/api/admin/jobs/refresh-all') {
+                JsonResponse::send($this->adminController()->trigger('refresh-all'));
+                return;
+            }
+
             if ($method === 'POST' && $path === '/api/admin/openrouter-test') {
                 JsonResponse::send($this->adminController()->openRouterTest());
                 return;

@@ -874,8 +874,59 @@ final class RadarService
             'sync-csfloat' => $this->runJob($jobName, fn (): array => $this->performCsfloatSync()),
             'generate-report' => $this->runJob($jobName, fn (): array => $this->performReportGeneration()),
             'send-discord-report' => $this->runJob($jobName, fn (): array => $this->performDiscordReport()),
+            'refresh-all' => $this->runJob($jobName, fn (): array => $this->performAutoRefresh()),
             default => throw new RuntimeException('Unknown job.'),
         };
+    }
+
+    private function performAutoRefresh(): array
+    {
+        $results = [];
+        $itemsProcessed = 0;
+
+        if ($this->marketSyncCooldownRemaining() === 0) {
+            try {
+                $result = $this->performMarketSync();
+                $results['sync-market'] = $result;
+                $itemsProcessed += (int) ($result['items_processed'] ?? 0);
+            } catch (\Throwable $exception) {
+                $results['sync-market'] = ['status' => 'error', 'error' => $exception->getMessage()];
+            }
+        } else {
+            $results['sync-market'] = [
+                'status' => 'skipped',
+                'reason' => 'cooldown',
+                'cooldown_remaining' => $this->marketSyncCooldownRemaining(),
+            ];
+        }
+
+        if ($this->csfloatSyncCooldownRemaining() === 0) {
+            try {
+                $result = $this->performCsfloatSync();
+                $results['sync-csfloat'] = $result;
+                $itemsProcessed += (int) ($result['items_processed'] ?? 0);
+            } catch (\Throwable $exception) {
+                $results['sync-csfloat'] = ['status' => 'error', 'error' => $exception->getMessage()];
+            }
+        } else {
+            $results['sync-csfloat'] = [
+                'status' => 'skipped',
+                'reason' => 'cooldown',
+                'cooldown_remaining' => $this->csfloatSyncCooldownRemaining(),
+            ];
+        }
+
+        try {
+            $results['generate-report'] = $this->performReportGeneration();
+        } catch (\Throwable $exception) {
+            $results['generate-report'] = ['status' => 'error', 'error' => $exception->getMessage()];
+        }
+
+        return [
+            'synced_at' => date(DATE_ATOM),
+            'items_processed' => $itemsProcessed,
+            'results' => $results,
+        ];
     }
 
     public function openRouterTest(): array
