@@ -2382,7 +2382,7 @@ final class RadarService
 
         do {
             $url = sprintf(
-                'https://steamcommunity.com/inventory/%s/730/2?l=french&count=2000%s',
+                'https://steamcommunity.com/inventory/%s/730/2?l=english&count=2000%s',
                 rawurlencode($steamId64),
                 $startAssetId !== null ? '&start_assetid=' . rawurlencode($startAssetId) : ''
             );
