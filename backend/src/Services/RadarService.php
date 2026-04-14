@@ -27,6 +27,7 @@ final class RadarService
     private string $positionsFile;
     private string $profilesFile;
     private string $inventoryFile;
+    private string $steamPriceCacheFile;
     private string $stateFile;
     private bool $buildingCanonicalState = false;
 
@@ -47,6 +48,7 @@ final class RadarService
         $this->positionsFile = $this->storageDir . '/positions.json';
         $this->profilesFile = $this->storageDir . '/profiles.json';
         $this->inventoryFile = $this->storageDir . '/profile_inventory.json';
+        $this->steamPriceCacheFile = $this->storageDir . '/steam_price_cache.json';
         $this->stateFile = $this->storageDir . '/radar_state.json';
 
         $this->ensureDirectories();
@@ -2091,8 +2093,15 @@ final class RadarService
     private function enrichInventoryHolding(array $entry, array $marketIndex): array
     {
         $marketItem = $marketIndex[$entry['market_hash_name']] ?? null;
-        $signal = $this->buildInventorySellSignal($marketItem, $entry);
-        $currentPrice = isset($marketItem['current_price']) ? (float) $marketItem['current_price'] : null;
+        $steamPrice = null;
+        if ($marketItem === null) {
+            $steamPrice = $this->fetchSteamMarketPrice($entry['market_hash_name'] ?? '');
+        }
+
+        $signal = $this->buildInventorySellSignal($marketItem, $entry, $steamPrice);
+        $currentPrice = isset($marketItem['current_price'])
+            ? (float) $marketItem['current_price']
+            : ($steamPrice['price'] ?? null);
         $amount = max(1, (int) ($entry['amount'] ?? 1));
         $totalValue = $currentPrice !== null ? round($currentPrice * $amount, 2) : null;
 
@@ -2113,6 +2122,7 @@ final class RadarService
             'market_page' => $marketItem['market_page'] ?? null,
             'current_price_eur' => $currentPrice,
             'current_total_value_eur' => $totalValue,
+            'price_source' => $marketItem !== null ? 'skinport' : ($steamPrice !== null ? 'steam' : null),
             'buy_price_eur' => 0.0,
             'cost_basis_total_eur' => 0.0,
             'interest_score' => $marketItem['interest_score'] ?? null,
@@ -2129,9 +2139,18 @@ final class RadarService
         ];
     }
 
-    private function buildInventorySellSignal(?array $marketItem, array $entry): array
+    private function buildInventorySellSignal(?array $marketItem, array $entry, ?array $steamPrice = null): array
     {
         if ($marketItem === null) {
+            if ($steamPrice !== null && ($steamPrice['price'] ?? null) !== null) {
+                return [
+                    'key' => 'watch_sell',
+                    'label' => 'Surveiller',
+                    'priority' => 56,
+                    'reasons' => ['Prix detecte via Steam Market (Skinport indisponible pour cet item).'],
+                ];
+            }
+
             return [
                 'key' => 'watch_sell',
                 'label' => 'Surveiller',
@@ -2169,6 +2188,91 @@ final class RadarService
 
         $reasons[] = 'Pas de signal de sortie dominant sur cet item importe.';
         return ['key' => 'hold', 'label' => 'Garder', 'priority' => 34, 'reasons' => $reasons];
+    }
+
+    private function fetchSteamMarketPrice(string $marketHashName): ?array
+    {
+        $marketHashName = trim($marketHashName);
+        if ($marketHashName === '') {
+            return null;
+        }
+
+        $cache = $this->readJson($this->steamPriceCacheFile, []);
+        $key = strtolower($marketHashName);
+        $cached = $cache[$key] ?? null;
+        if (is_array($cached)) {
+            $updatedAt = isset($cached['updated_at']) ? strtotime((string) $cached['updated_at']) : false;
+            if ($updatedAt !== false && (time() - $updatedAt) < 21600) {
+                return $cached;
+            }
+        }
+
+        $url = sprintf(
+            'https://steamcommunity.com/market/priceoverview/?appid=730&currency=3&market_hash_name=%s',
+            rawurlencode($marketHashName)
+        );
+
+        try {
+            $payload = $this->fetchJsonWithCurl($url, [
+                'Accept: application/json, text/plain, */*',
+            ], 20);
+        } catch (\Throwable) {
+            return $cached;
+        }
+
+        $success = $payload['success'] ?? false;
+        if ($success !== true && $success !== 1 && $success !== '1') {
+            return $cached;
+        }
+
+        $price = $this->parseSteamPrice($payload['lowest_price'] ?? $payload['median_price'] ?? null);
+        if ($price === null) {
+            return $cached;
+        }
+
+        $entry = [
+            'price' => $price,
+            'volume' => isset($payload['volume']) ? (string) $payload['volume'] : null,
+            'updated_at' => date(DATE_ATOM),
+        ];
+        $cache[$key] = $entry;
+        $this->writeJson($this->steamPriceCacheFile, $cache);
+
+        return $entry;
+    }
+
+    private function parseSteamPrice(mixed $value): ?float
+    {
+        if (is_numeric($value)) {
+            return (float) $value;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $normalized = trim($value);
+        if ($normalized === '') {
+            return null;
+        }
+
+        $normalized = str_replace(['€', '$', '£', 'USD', 'EUR'], '', $normalized);
+        $normalized = str_replace("\xC2\xA0", ' ', $normalized);
+        $normalized = preg_replace('/[^\d,.\s]/', '', $normalized) ?? '';
+        $normalized = trim($normalized);
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (str_contains($normalized, ',') && str_contains($normalized, '.')) {
+            $normalized = str_replace(',', '', $normalized);
+        } elseif (str_contains($normalized, ',')) {
+            $normalized = str_replace(',', '.', $normalized);
+        }
+
+        $normalized = preg_replace('/\s+/', '', $normalized) ?? '';
+
+        return is_numeric($normalized) ? (float) $normalized : null;
     }
 
     private function wearLabelFromFloat(?float $float): ?string
