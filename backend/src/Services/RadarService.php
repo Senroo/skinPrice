@@ -988,27 +988,19 @@ final class RadarService
 
     private function performCatalogSync(): array
     {
-        $payload = $this->fetchJsonWithCurl('https://raw.githubusercontent.com/ByMykel/CSGO-API/main/public/api/en/skins_not_grouped.json');
+        $payload = $this->fetchCatalogPayload('https://raw.githubusercontent.com/ByMykel/CSGO-API/main/public/api/en/items.json');
+        if ($payload === []) {
+            $payload = $this->fetchJsonWithCurl('https://raw.githubusercontent.com/ByMykel/CSGO-API/main/public/api/en/skins_not_grouped.json');
+        }
         $items = [];
 
         foreach ($payload as $item) {
-            $marketHashName = (string) ($item['market_hash_name'] ?? '');
-            if ($marketHashName === '') {
+            $normalized = $this->normalizeCatalogItem($item);
+            if ($normalized === null) {
                 continue;
             }
 
-            $items[$marketHashName] = [
-                'id' => $this->idFromName($marketHashName),
-                'market_hash_name' => $marketHashName,
-                'name' => $item['name'] ?? $marketHashName,
-                'weapon' => $item['weapon']['name'] ?? null,
-                'rarity' => $item['rarity']['name'] ?? null,
-                'category' => $item['category']['name'] ?? null,
-                'exterior' => $item['wear']['name'] ?? null,
-                'stattrak' => (bool) ($item['stattrak'] ?? false),
-                'souvenir' => (bool) ($item['souvenir'] ?? false),
-                'image_url' => $item['image'] ?? null,
-            ];
+            $items[$normalized['market_hash_name']] = $normalized;
         }
 
         ksort($items);
@@ -1023,6 +1015,43 @@ final class RadarService
         return [
             'synced_at' => $data['synced_at'],
             'items_processed' => count($data['items']),
+        ];
+    }
+
+    private function fetchCatalogPayload(string $url): array
+    {
+        try {
+            return $this->fetchJsonWithCurl($url);
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    private function normalizeCatalogItem(array $item): ?array
+    {
+        $marketHashName = trim((string) ($item['market_hash_name'] ?? ''));
+        if ($marketHashName === '') {
+            return null;
+        }
+
+        $name = trim((string) ($item['name'] ?? $marketHashName));
+        $weapon = $item['weapon']['name'] ?? ($item['weapon'] ?? null);
+        $rarity = $item['rarity']['name'] ?? ($item['rarity'] ?? null);
+        $category = $item['category']['name'] ?? ($item['category'] ?? ($item['type'] ?? null));
+        $exterior = $item['wear']['name'] ?? ($item['wear'] ?? null);
+        $image = $item['image'] ?? ($item['image_url'] ?? ($item['icon_url'] ?? null));
+
+        return [
+            'id' => $this->idFromName($marketHashName),
+            'market_hash_name' => $marketHashName,
+            'name' => $name !== '' ? $name : $marketHashName,
+            'weapon' => $weapon,
+            'rarity' => $rarity,
+            'category' => $category,
+            'exterior' => $exterior,
+            'stattrak' => (bool) ($item['stattrak'] ?? false),
+            'souvenir' => (bool) ($item['souvenir'] ?? false),
+            'image_url' => $image,
         ];
     }
 
