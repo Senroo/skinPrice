@@ -27,4 +27,9 @@ final class AdminController
     {
         return $this->radarService->trigger($jobName);
     }
+
+    public function openRouterTest(): array
+    {
+        return $this->radarService->openRouterTest();
+    }
 }

@@ -146,6 +146,11 @@ final class Application
                 return;
             }
 
+            if ($method === 'POST' && $path === '/api/admin/openrouter-test') {
+                JsonResponse::send($this->adminController()->openRouterTest());
+                return;
+            }
+
             JsonResponse::send([
                 'message' => 'Route not found',
                 'method' => $method,

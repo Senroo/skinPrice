@@ -877,6 +877,61 @@ final class RadarService
         };
     }
 
+    public function openRouterTest(): array
+    {
+        if (!$this->openRouterIsConfigured()) {
+            return [
+                'status' => 'error',
+                'error' => 'OPENROUTER_API_KEY absente.',
+            ];
+        }
+
+        $payload = [
+            'model' => $this->openRouterModel(),
+            'temperature' => 0,
+            'messages' => [
+                ['role' => 'system', 'content' => 'Reply with a short OK.'],
+                ['role' => 'user', 'content' => 'Ping'],
+            ],
+        ];
+
+        $startedAt = microtime(true);
+        try {
+            $response = $this->postJsonWithCurl(
+                'https://openrouter.ai/api/v1/chat/completions',
+                $payload,
+                [
+                    'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
+                    'HTTP-Referer: https://cs2-market-daily-radar.local',
+                    'X-Title: CS2 Market Daily Radar OpenRouter Test',
+                ],
+                $this->openRouterTestTimeoutSeconds()
+            );
+
+            $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $excerpt = trim($this->extractAssistantContent($response));
+            if (strlen($excerpt) > 120) {
+                $excerpt = substr($excerpt, 0, 120) . '...';
+            }
+
+            return [
+                'status' => 'ok',
+                'model' => (string) ($response['model'] ?? $this->openRouterModel()),
+                'latency_ms' => $latencyMs,
+                'response_excerpt' => $excerpt,
+                'error' => null,
+            ];
+        } catch (\Throwable $exception) {
+            return [
+                'status' => 'error',
+                'model' => $this->openRouterModel(),
+                'latency_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                'response_excerpt' => null,
+                'error' => $this->normalizeAiErrorMessage($exception->getMessage()),
+            ];
+        }
+    }
+
     private function performCatalogSync(): array
     {
         $payload = $this->fetchJsonWithCurl('https://raw.githubusercontent.com/ByMykel/CSGO-API/main/public/api/en/skins_not_grouped.json');
@@ -3913,6 +3968,16 @@ PS1;
         }
 
         return 35;
+    }
+
+    private function openRouterTestTimeoutSeconds(): int
+    {
+        $configured = $this->env('OPENROUTER_TEST_TIMEOUT_SECONDS');
+        if ($configured !== null && is_numeric($configured)) {
+            return max(5, min(30, (int) $configured));
+        }
+
+        return 15;
     }
 
     private function normalizeAiErrorMessage(string $message): string

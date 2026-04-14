@@ -1943,6 +1943,34 @@ const bindAdminActions = () => {
     });
   });
 
+  const openRouterButton = document.getElementById("openrouter-test");
+  if (openRouterButton) {
+    openRouterButton.addEventListener("click", async () => {
+      const feedback = document.getElementById("openrouter-feedback") ?? document.getElementById("job-feedback");
+      try {
+        setButtonsDisabled(true);
+        if (feedback) {
+          feedback.textContent = "Test OpenRouter en cours...";
+        }
+        const result = await fetchJson("/api/admin/openrouter-test", { method: "POST" });
+        if (feedback) {
+          if (result.status === "ok") {
+            const latency = result.latency_ms != null ? `(${result.latency_ms} ms)` : "";
+            feedback.textContent = `OpenRouter OK via ${result.model ?? "model inconnu"} ${latency}`.trim();
+          } else {
+            feedback.textContent = `OpenRouter KO: ${result.error ?? "erreur inconnue"}`;
+          }
+        }
+      } catch (error) {
+        if (feedback) {
+          feedback.textContent = `OpenRouter KO: ${error.message}`;
+        }
+      } finally {
+        setButtonsDisabled(false);
+      }
+    });
+  }
+
   document.getElementById("refresh-live")?.addEventListener("click", async () => {
     const feedback = document.getElementById("job-feedback");
     try {
