@@ -766,8 +766,24 @@ const renderProfiles = () => {
   root.innerHTML =
     profiles.length > 0
       ? profiles
-          .map(
-            (profile) => `
+          .map((profile) => {
+            const pricedCount = profile.priced_items_count ?? 0;
+            const totalCount =
+              profile.analysis_mode === "inventory"
+                ? profile.inventory_items_count ?? 0
+                : profile.positions_count ?? 0;
+            const hasPriced = pricedCount > 0;
+            const valueLabel = hasPriced ? euro(profile.portfolio_value_eur) : "Prix indisponible";
+            const pnlLabel = hasPriced && profile.pnl_pct != null ? `${pct(profile.pnl_pct)} latent` : "PnL n/a";
+            const metaParts = [];
+            if (totalCount > 0) {
+              metaParts.push(`valorises ${pricedCount}/${totalCount}`);
+            }
+            if ((profile.cost_basis_eur ?? 0) > 0) {
+              metaParts.push(`cout ${euro(profile.cost_basis_eur)}`);
+            }
+            const metaLine = metaParts.join(" • ");
+            return `
             <article class="table-item">
                 <div class="table-item-main">
                   <strong><button class="item-name-link" type="button" data-open-profile="${escapeHtml(profile.profile_id)}">${escapeHtml(profile.name)}</button></strong>
@@ -787,13 +803,13 @@ const renderProfiles = () => {
                 </div>
               </div>
               <div class="value-stack">
-                <strong class="${profile.pnl_eur > 0 ? "positive" : (profile.pnl_eur < 0 ? "negative" : "neutral")}">${euro(profile.portfolio_value_eur)}</strong>
-                <span class="${profile.pnl_pct > 0 ? "positive" : (profile.pnl_pct < 0 ? "negative" : "neutral")}">${pct(profile.pnl_pct)} latent</span>
-                <span class="table-meta">cout ${euro(profile.cost_basis_eur)}</span>
+                <strong class="${profile.pnl_eur > 0 ? "positive" : (profile.pnl_eur < 0 ? "negative" : "neutral")}">${escapeHtml(valueLabel)}</strong>
+                <span class="${profile.pnl_pct > 0 ? "positive" : (profile.pnl_pct < 0 ? "negative" : "neutral")}">${escapeHtml(pnlLabel)}</span>
+                <span class="table-meta">${escapeHtml(metaLine || "prix indisponible")}</span>
               </div>
             </article>
-          `
-          )
+          `;
+          })
           .join("")
       : `
         <article class="table-item">
@@ -958,10 +974,17 @@ const renderPortfolioDetail = () => {
     countPill.textContent = `${detail.analysis_total ?? 0} item${(detail.analysis_total ?? 0) > 1 ? "s" : ""}`;
   }
 
+  const pricedCount = detail.priced_items_count ?? 0;
+  const totalCount = detail.analysis_total ?? 0;
+  const hasPriced = pricedCount > 0;
+  const valueLabel = hasPriced ? euro(detail.portfolio_value_eur) : "Prix indisponible";
+  const pricedMeta = totalCount > 0 ? `valorises ${pricedCount}/${totalCount}` : "prix indisponible";
+  const pnlLabel = detail.pnl_pct == null ? "PnL n/a" : `PnL ${pct(detail.pnl_pct)}`;
+
   kpis.innerHTML = [
-    { label: "Valeur totale ATM", value: euro(detail.portfolio_value_eur), meta: `${detail.ready_to_sell_count ?? 0} sell maintenant` },
-    { label: "A surveiller", value: String(detail.watch_count ?? 0), meta: `${detail.keep_count ?? 0} keep` },
-    { label: "PnL latent", value: detail.pnl_pct == null ? "n/a" : pct(detail.pnl_pct), meta: `cout ${euro(detail.cost_basis_eur)}` },
+    { label: "Valeur estimee", value: valueLabel, meta: pricedMeta },
+    { label: "Ventes prioritaires", value: String(detail.ready_to_sell_count ?? 0), meta: `${detail.watch_count ?? 0} watch` },
+    { label: "PnL latent", value: pnlLabel, meta: `cout ${euro(detail.cost_basis_eur)}` },
     { label: "Inventaire", value: String(detail.inventory_items_count ?? 0), meta: `${detail.units_count ?? 0} unites suivies` },
   ]
     .map(

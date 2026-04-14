@@ -19,6 +19,7 @@ final class RadarService
     private string $catalogFile;
     private string $marketFile;
     private string $marketBackupFile;
+    private string $marketFullFile;
     private string $csfloatSignalsFile;
     private string $reportsFile;
     private string $jobsFile;
@@ -38,6 +39,7 @@ final class RadarService
         $this->catalogFile = $this->storageDir . '/catalog.json';
         $this->marketFile = $this->storageDir . '/latest_market.json';
         $this->marketBackupFile = $this->storageDir . '/latest_market_backup.json';
+        $this->marketFullFile = $this->storageDir . '/latest_market_full.json';
         $this->csfloatSignalsFile = $this->storageDir . '/csfloat_signals.json';
         $this->reportsFile = $this->storageDir . '/reports.json';
         $this->jobsFile = $this->storageDir . '/jobs.json';
@@ -476,7 +478,7 @@ final class RadarService
     public function profileInventory(?string $profileId = null): array
     {
         $marketIndex = [];
-        foreach (($this->readMarketData()['items'] ?? []) as $item) {
+        foreach (($this->readMarketFullData()['items'] ?? []) as $item) {
             $marketIndex[(string) ($item['market_hash_name'] ?? '')] = $item;
         }
 
@@ -1058,7 +1060,7 @@ final class RadarService
             $watchlist[$entry['market_hash_name']] = true;
         }
 
-        $items = [];
+        $fullItems = [];
         foreach ($marketPayload as $marketItem) {
             $marketHashName = (string) ($marketItem['market_hash_name'] ?? '');
             if ($marketHashName === '' || !isset($catalogIndex[$marketHashName])) {
@@ -1066,7 +1068,7 @@ final class RadarService
             }
 
             $currentPrice = $this->pickCurrentPrice($marketItem);
-            if ($currentPrice === null || $currentPrice < 5.0 || $currentPrice > 800.0) {
+            if ($currentPrice === null) {
                 continue;
             }
 
@@ -1108,15 +1110,15 @@ final class RadarService
                 'is_watchlist' => isset($watchlist[$marketHashName]),
             ];
 
-            if (isset($items[$marketHashName])) {
-                $items[$marketHashName] = $this->mergeMarketRows($items[$marketHashName], $merged);
+            if (isset($fullItems[$marketHashName])) {
+                $fullItems[$marketHashName] = $this->mergeMarketRows($fullItems[$marketHashName], $merged);
                 continue;
             }
 
-            $items[$marketHashName] = $merged;
+            $fullItems[$marketHashName] = $merged;
         }
 
-        $items = array_map(function (array $item): array {
+        $fullItems = array_map(function (array $item): array {
             $item['change_vs_yesterday_pct'] = $this->percentageChange($item['current_price'], $item['previous_price'] ?? $item['sales_24h_avg'] ?? null);
             $item['change_vs_7d_pct'] = $this->percentageChange($item['current_price'], $item['sales_7d_avg'] ?? null);
             $item['change_vs_30d_pct'] = $this->percentageChange($item['current_price'], $item['sales_30d_avg'] ?? null);
@@ -1130,9 +1132,19 @@ final class RadarService
             unset($item['previous_price']);
 
             return $item;
-        }, array_values($items));
+        }, array_values($fullItems));
+
+        $items = array_values(array_filter(
+            $fullItems,
+            static fn (array $item): bool => ($item['current_price'] ?? 0.0) >= 5.0 && ($item['current_price'] ?? 0.0) <= 800.0
+        ));
 
         usort($items, function (array $left, array $right): int {
+            return [$right['interest_score'], $right['sales_24h_volume'], $right['current_price']]
+                <=> [$left['interest_score'], $left['sales_24h_volume'], $left['current_price']];
+        });
+
+        usort($fullItems, function (array $left, array $right): int {
             return [$right['interest_score'], $right['sales_24h_volume'], $right['current_price']]
                 <=> [$left['interest_score'], $left['sales_24h_volume'], $left['current_price']];
         });
@@ -1149,6 +1161,11 @@ final class RadarService
 
         $this->writeJson($this->marketFile, $data);
         $this->writeJson($this->marketBackupFile, $data);
+        $this->writeJson($this->marketFullFile, [
+            'date' => $data['date'],
+            'synced_at' => $data['synced_at'],
+            'items' => $fullItems,
+        ]);
         $this->writeJson($this->snapshotsDir . '/' . $data['date'] . '.json', $data);
 
         return [
@@ -1866,11 +1883,20 @@ final class RadarService
         $watch = 0;
         $keep = 0;
         $units = 0;
+        $priced = 0;
+        $unpriced = 0;
         $analysisRows = $positions !== [] ? $positions : $inventoryHoldings;
         $usesImportedInventory = $positions === [] && $inventoryHoldings !== [];
 
         foreach ($analysisRows as $position) {
-            $currentValue += (float) ($position['current_total_value_eur'] ?? $position['current_price_eur'] ?? 0.0);
+            $value = $position['current_total_value_eur'] ?? $position['current_price_eur'] ?? null;
+            if ($value !== null && is_numeric($value)) {
+                $currentValue += (float) $value;
+                $priced += 1;
+            } else {
+                $unpriced += 1;
+            }
+
             $costBasis += (float) ($position['cost_basis_total_eur'] ?? $position['buy_price_eur'] ?? 0.0);
             $units += max(1, (int) ($position['amount'] ?? 1));
 
@@ -1884,8 +1910,11 @@ final class RadarService
             }
         }
 
-        $pnlValue = round($currentValue - $costBasis, 2);
-        $pnlPct = $costBasis > 0 ? round((($currentValue - $costBasis) / $costBasis) * 100, 2) : null;
+        $portfolioValue = $priced > 0 ? round($currentValue, 2) : null;
+        $pnlValue = $priced > 0 ? round($currentValue - $costBasis, 2) : null;
+        $pnlPct = ($priced > 0 && $costBasis > 0)
+            ? round((($currentValue - $costBasis) / $costBasis) * 100, 2)
+            : null;
         $urgent = array_slice(array_values(array_filter(
             $analysisRows,
             static fn (array $position): bool => ($position['sell_signal'] ?? '') === 'sell_now'
@@ -1910,15 +1939,29 @@ final class RadarService
             'manual_positions_count' => count($positions),
             'inventory_items_count' => count($inventoryHoldings),
             'units_count' => $units,
+            'priced_items_count' => $priced,
+            'unpriced_items_count' => $unpriced,
             'analysis_mode' => $usesImportedInventory ? 'inventory' : 'positions',
             'ready_to_sell_count' => $ready,
             'watch_count' => $watch,
             'keep_count' => $keep,
-            'portfolio_value_eur' => round($currentValue, 2),
+            'portfolio_value_eur' => $portfolioValue,
             'cost_basis_eur' => round($costBasis, 2),
             'pnl_eur' => $pnlValue,
             'pnl_pct' => $pnlPct,
-            'summary' => $this->buildProfileSummaryText($profile['name'], count($positions), count($inventoryHoldings), $ready, $watch, $keep, $pnlPct, $usesImportedInventory, $profile['inventory_error'] ?? null),
+            'summary' => $this->buildProfileSummaryText(
+                $profile['name'],
+                count($positions),
+                count($inventoryHoldings),
+                $ready,
+                $watch,
+                $keep,
+                $pnlPct,
+                $usesImportedInventory,
+                $profile['inventory_error'] ?? null,
+                $priced,
+                $unpriced
+            ),
             'advice_title' => $advice['title'],
             'advice_text' => $advice['text'],
             'urgent_sales' => $urgent,
@@ -1930,7 +1973,19 @@ final class RadarService
         ];
     }
 
-    private function buildProfileSummaryText(string $name, int $positionsCount, int $inventoryCount, int $ready, int $watch, int $keep, ?float $pnlPct, bool $usesImportedInventory, ?string $inventoryError = null): string
+    private function buildProfileSummaryText(
+        string $name,
+        int $positionsCount,
+        int $inventoryCount,
+        int $ready,
+        int $watch,
+        int $keep,
+        ?float $pnlPct,
+        bool $usesImportedInventory,
+        ?string $inventoryError = null,
+        int $priced = 0,
+        int $unpriced = 0
+    ): string
     {
         if ($inventoryError !== null && $positionsCount === 0 && $inventoryCount === 0) {
             return sprintf('%s: import inventaire impossible pour le moment. %s', $name, $inventoryError);
@@ -1941,8 +1996,11 @@ final class RadarService
         }
 
         if ($usesImportedInventory) {
+            $pricingNote = $inventoryCount > 0
+                ? sprintf('Estimation prix: %d/%d items valorises.', $priced, $inventoryCount)
+                : 'Estimation prix: aucun item valorise.';
             return sprintf(
-                '%s suit %d item%s importe%s depuis Steam. %d vente%s potentielle%s, %d item%s a surveiller et %d a conserver. Les PnL restent a 0 tant que tu n ajoutes pas de prix d entree.',
+                '%s suit %d item%s importe%s depuis Steam. %d vente%s potentielle%s, %d item%s a surveiller et %d a conserver. %s',
                 $name,
                 $inventoryCount,
                 $inventoryCount > 1 ? 's' : '',
@@ -1952,7 +2010,8 @@ final class RadarService
                 $ready > 1 ? 's' : '',
                 $watch,
                 $watch > 1 ? 's' : '',
-                $keep
+                $keep,
+                $pricingNote
             );
         }
 
@@ -2702,6 +2761,16 @@ PS1;
         }
 
         return $this->marketDataFromReport();
+    }
+
+    private function readMarketFullData(): array
+    {
+        $market = $this->readJson($this->marketFullFile, ['items' => []]);
+        if (($market['items'] ?? []) !== []) {
+            return $market;
+        }
+
+        return $this->readMarketData();
     }
 
     private function assertMarketSyncCooldown(): void
