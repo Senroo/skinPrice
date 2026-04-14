@@ -804,6 +804,7 @@ final class RadarService
         $csfloatConfigured = $this->csfloatIsConfigured();
         $csfloatSyncedAt = is_array($csfloat) ? ($csfloat['synced_at'] ?? null) : null;
         $openRouterConfigured = $this->openRouterIsConfigured();
+        $openRouterWebSearch = $this->openRouterWebSearchEnabled();
         $discordConfigured = $this->discordWebhookIsConfigured();
 
         return [
@@ -830,7 +831,7 @@ final class RadarService
                     'name' => 'OpenRouter',
                     'status' => $openRouterConfigured ? 'ready' : 'unknown',
                     'note' => $openRouterConfigured
-                        ? sprintf('analyse IA active via %s avec web search', $this->openRouterModel())
+                        ? sprintf('analyse IA active via %s %s', $this->openRouterModel(), $openRouterWebSearch ? 'avec web search' : 'sans web search')
                         : 'OPENROUTER_API_KEY absente, rapport texte local uniquement',
                 ],
                 [
@@ -2998,37 +2999,46 @@ PS1;
             ],
         ];
 
-        $tools = [
-            [
-                'type' => 'openrouter:web_search',
-                'parameters' => [
-                    'max_results' => 5,
-                    'max_total_results' => 10,
-                    'search_context_size' => 'medium',
-                ],
-            ],
-        ];
-
         $headers = [
             'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
             'HTTP-Referer: https://cs2-market-daily-radar.local',
             'X-Title: CS2 Market Daily Radar',
         ];
 
-        try {
-            $payloadWithTools = $payload;
-            $payloadWithTools['tools'] = $tools;
-            $response = $this->postJsonWithCurl(
-                'https://openrouter.ai/api/v1/chat/completions',
-                $payloadWithTools,
-                $headers,
-                $this->openRouterTimeoutSeconds()
-            );
-        } catch (\Throwable $exception) {
-            if (!$this->isTimeoutError($exception->getMessage())) {
-                throw $exception;
-            }
+        if ($this->openRouterWebSearchEnabled()) {
+            $tools = [
+                [
+                    'type' => 'openrouter:web_search',
+                    'parameters' => [
+                        'max_results' => 5,
+                        'max_total_results' => 10,
+                        'search_context_size' => 'medium',
+                    ],
+                ],
+            ];
 
+            try {
+                $payloadWithTools = $payload;
+                $payloadWithTools['tools'] = $tools;
+                $response = $this->postJsonWithCurl(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    $payloadWithTools,
+                    $headers,
+                    $this->openRouterTimeoutSeconds()
+                );
+            } catch (\Throwable $exception) {
+                if (!$this->isTimeoutError($exception->getMessage())) {
+                    throw $exception;
+                }
+
+                $response = $this->postJsonWithCurl(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    $payload,
+                    $headers,
+                    $this->openRouterFallbackTimeoutSeconds()
+                );
+            }
+        } else {
             $response = $this->postJsonWithCurl(
                 'https://openrouter.ai/api/v1/chat/completions',
                 $payload,
@@ -3088,37 +3098,46 @@ PS1;
             ],
         ];
 
-        $tools = [
-            [
-                'type' => 'openrouter:web_search',
-                'parameters' => [
-                    'max_results' => 4,
-                    'max_total_results' => 8,
-                    'search_context_size' => 'medium',
-                ],
-            ],
-        ];
-
         $headers = [
             'Authorization: Bearer ' . $this->env('OPENROUTER_API_KEY'),
             'HTTP-Referer: https://cs2-market-daily-radar.local',
             'X-Title: CS2 Market Daily Radar Skin Advisor',
         ];
 
-        try {
-            $payloadWithTools = $payload;
-            $payloadWithTools['tools'] = $tools;
-            $response = $this->postJsonWithCurl(
-                'https://openrouter.ai/api/v1/chat/completions',
-                $payloadWithTools,
-                $headers,
-                $this->openRouterTimeoutSeconds()
-            );
-        } catch (\Throwable $exception) {
-            if (!$this->isTimeoutError($exception->getMessage())) {
-                throw $exception;
-            }
+        if ($this->openRouterWebSearchEnabled()) {
+            $tools = [
+                [
+                    'type' => 'openrouter:web_search',
+                    'parameters' => [
+                        'max_results' => 4,
+                        'max_total_results' => 8,
+                        'search_context_size' => 'medium',
+                    ],
+                ],
+            ];
 
+            try {
+                $payloadWithTools = $payload;
+                $payloadWithTools['tools'] = $tools;
+                $response = $this->postJsonWithCurl(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    $payloadWithTools,
+                    $headers,
+                    $this->openRouterTimeoutSeconds()
+                );
+            } catch (\Throwable $exception) {
+                if (!$this->isTimeoutError($exception->getMessage())) {
+                    throw $exception;
+                }
+
+                $response = $this->postJsonWithCurl(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    $payload,
+                    $headers,
+                    $this->openRouterFallbackTimeoutSeconds()
+                );
+            }
+        } else {
             $response = $this->postJsonWithCurl(
                 'https://openrouter.ai/api/v1/chat/completions',
                 $payload,
@@ -4019,6 +4038,17 @@ PS1;
     private function openRouterFallbackTimeoutSeconds(): int
     {
         return max(8, min(20, $this->openRouterTimeoutSeconds()));
+    }
+
+    private function openRouterWebSearchEnabled(): bool
+    {
+        $configured = $this->env('OPENROUTER_WEB_SEARCH');
+        if ($configured === null) {
+            return true;
+        }
+
+        $value = strtolower(trim((string) $configured));
+        return !in_array($value, ['0', 'false', 'no', 'off'], true);
     }
 
     private function normalizeAiErrorMessage(string $message): string
